@@ -122,6 +122,26 @@ impl<'a> Record<'a> {
         }
     }
 
+    /// Extract the next LE word from the record.
+    ///
+    pub fn word(&mut self) -> Result<u16, LinkerError> {
+        let bytes = self.get(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Extract the next packed index from the record.
+    /// 
+    pub fn index(&mut self) -> Result<usize, LinkerError> {
+        let byte0 = self.byte()? as usize;
+
+        if byte0 < 0x80 {
+            Ok(byte0)
+        } else {
+            let byte1 = self.byte()? as usize;
+            Ok(((byte0 & 0x7f) << 8) | byte1)
+        }
+    }
+
     /// Extract a counted string, which has one byte of length and then
     /// that any bytes of ASCII text.
     ///
@@ -250,6 +270,57 @@ mod test
         let rec = [0x88, 0x01, 0x00, 0x00];
         let mut rec = Record::new(&rec)?;
         assert!(rec.counted_string().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn word_ok() -> Result<(), LinkerError> {
+        //
+        // Count is too short
+        //
+        let rec = [0x88, 0x03, 0x00, 0x34, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert_eq!(rec.word()?, 0x1234);
+
+        Ok(())
+    }
+
+    #[test]
+    fn word_truncated() -> Result<(), LinkerError> {
+        //
+        // Count is too short
+        //
+        let rec = [0x88, 0x02, 0x00, 0x34, 0x12];
+        let mut rec = Record::new(&rec)?;
+        assert!(rec.word().is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn index_short_ok() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x02, 0x00, 0x7f, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert_eq!(rec.index()?, 0x7f);
+
+        Ok(())
+    }
+
+    #[test]
+    fn index_long_ok() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x03, 0x00, 0xc0, 0x7a, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert_eq!(rec.index()?, 0x407a);
+
+        Ok(())
+    }
+
+    #[test]
+    fn index_truncated() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x02, 0x00, 0xc0, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert!(rec.index().is_err());
+
         Ok(())
     }
 }

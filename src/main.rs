@@ -1,9 +1,12 @@
+mod index_map;
 mod linker_error;
 mod linkstate;
+mod lnames;
 mod omf_vec;
 mod object;
 mod pass1;
 mod record;
+mod segment;
 
 use clap::Parser;
 use std::path::PathBuf;

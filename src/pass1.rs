@@ -3,6 +3,7 @@ use crate::linker_error::LinkerError;
 use crate::linkstate::LinkState;
 use crate::object::Object;
 use crate::record::{Record, RecordType};
+use crate::segment::{Segment, SegDef, SegName, Align, Combine};
 
 //
 // Pass 1 logic
@@ -18,7 +19,6 @@ pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
         pass1_object(state, &data, &mut obj, objname.as_os_str().to_str().unwrap())?;
         obj.data = Some(data);
         objects.push(obj);
-
     }
 
     Ok(())
@@ -39,10 +39,80 @@ fn pass1_theadr(obj: &mut Object, rec: &mut Record) -> Result<(), LinkerError> {
 fn pass1_lnames(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
     while !rec.end() {
         let lname = rec.counted_string()?;
-        let index = state.lnames.add(lname);
-        obj.lnames.push(index);
+        let index = state.lnames.add(&lname);
+        obj.lnames.add(index);
     }
     
+    Ok(())
+}
+
+fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
+    let acbp = rec.byte()?;
+
+    let align = Align::from_acbp(acbp)?;
+    let combine = Combine::from_acbp(acbp)?;
+
+    if align == Align::Absolute {
+        //
+        // We do not support it, but if align is Absolute, there are an absolute frame and offset.
+        //
+        let _frame = rec.word()?;
+        let _offset = rec.byte()?;
+
+        eprintln!("warning: segment has unsupported absolute aligment in module {}.", obj.name);
+    }
+
+    let length = rec.word()?;
+
+    //
+    // Name indices in the object file's lnames table.
+    //
+    let nameidx = rec.index()?;
+    let classidx = rec.index()?;
+    let ovlyidx = rec.index()?;
+
+    if !(obj.lnames.is_valid_index(nameidx) && obj.lnames.is_valid_index(classidx) && obj.lnames.is_valid_index(ovlyidx)) {
+        return Err(LinkerError::new(
+            &format!("invalid name triplet {}.{}.{} for SEGDEF", nameidx, classidx, ovlyidx)
+        ));
+    }
+
+    let nameidx = obj.lnames.get(nameidx);
+    let classidx = obj.lnames.get(classidx);
+    let ovlyidx = obj.lnames.get(ovlyidx);
+
+    let segname = SegName::new(nameidx, classidx, ovlyidx);
+
+    let bbit = (acbp & 0x01) != 0;
+
+    let length = if bbit {
+        if length != 0 {
+            let segname = state.segname(&segname);
+            return Err(LinkerError::new(&format!("{} has B bit set, but length is not set to zero.", segname)));
+        } else {
+            0x10000
+        }
+    } else {
+        length as usize
+    };
+
+    //
+    // Get or add the linker-level segment.
+    //
+    let index = if let Some(index) = state.get_segment_named(&segname) {
+        index
+    } else {
+        let segment = Segment::new(segname, 0, align, combine);
+        state.segments.add(segment)
+    };
+
+    let mut segdef = SegDef::new(index, length, align, combine);
+
+    segdef.base = state.segments[index].add_segdef(&segdef)?;
+
+    
+    obj.segdefs.add(segdef);
+
     Ok(())
 }
 
@@ -113,18 +183,103 @@ mod test {
         //
         // Force indices in the object to not be the same as the global state
         //
-        state.lnames.push("XYZ".to_owned());
+        state.lnames.add("XYZ");
 
         pass1_lnames(&mut obj, &mut state, &mut rec)?;
 
         assert_eq!(obj.lnames.len(), 2);
-        assert_eq!(obj.lnames[1], 2);
-        assert_eq!(obj.lnames[2], 3);
+        assert_eq!(obj.lnames.get(1), 2);
+        assert_eq!(obj.lnames.get(2), 3);
 
         assert_eq!(state.lnames.len(), 3);
-        assert_eq!(state.lnames[1], "XYZ");
-        assert_eq!(state.lnames[2], "ABC");
-        assert_eq!(state.lnames[3], "DEF");
+        assert_eq!(state.lnames.get(1), "XYZ");
+        assert_eq!(state.lnames.get(2), "ABC");
+        assert_eq!(state.lnames.get(3), "DEF");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_segdef_new() -> Result<(), LinkerError> {
+        //                                        PARA PUB     len=0x024f  name  class ovly
+        let rec = [ 0x98, 0x07, 0x00, 0b011_010_00, 0x4f, 0x02, 0x01, 0x02, 0x00, 0x00 ]; 
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        state.lnames.add("");
+
+        obj.lnames.add(state.lnames.add("_TEXT"));     // index 1 == _TEXT
+        obj.lnames.add(state.lnames.add("CODE"));      // index 2 == CODE
+
+        let seg = Segment::new(SegName::new(0, 0, 0), 0, Align::Byte, Combine::Private);
+
+        // Make sure segment we add is at index 2 in the global list
+        //
+        state.segments.push(seg);
+
+        pass1_segdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(state.segments.len(), 2);
+        assert_eq!(obj.segdefs.len(), 1);
+
+        let segdef = &obj.segdefs[1];
+
+        assert_eq!(segdef.segidx, 2);
+        assert_eq!(segdef.base, 0);
+        assert_eq!(segdef.length, 0x24f);
+        assert_eq!(segdef.align, Align::Para);
+        assert_eq!(segdef.combine, Combine::Public);
+
+        let segment = &state.segments[2];
+
+        assert_eq!(segment.length, 0x24f);
+        assert_eq!(state.segname(&segment.name), "_TEXT.CODE.");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_segdef_combine() -> Result<(), LinkerError> {
+        //                                        PARA PUB     len=0x024f  name  class ovly
+        let rec = [ 0x98, 0x07, 0x00, 0b011_010_00, 0x4f, 0x02, 0x01, 0x02, 0x00, 0x00 ]; 
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        obj.lnames.add(state.lnames.add("_TEXT"));     // index 1 == _TEXT
+        obj.lnames.add(state.lnames.add("CODE"));      // index 2 == CODE
+
+        let seg = Segment::new(SegName::new(0, 0, 0), 0, Align::Byte, Combine::Private);
+
+        // Make sure segment we add is at index 2 in the global list
+        //
+        state.segments.push(seg);
+
+        let seg = Segment::new(SegName::new(1, 2, 0), 0x100, Align::Byte, Combine::Public);
+
+        // We should combine with this segment
+        //
+        state.segments.push(seg);
+
+        pass1_segdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(state.segments.len(), 2);
+        assert_eq!(obj.segdefs.len(), 1);
+
+        let segdef = &obj.segdefs[1];
+
+        assert_eq!(segdef.segidx, 2);
+        assert_eq!(segdef.base, 0x100);
+        assert_eq!(segdef.length, 0x24f);
+        assert_eq!(segdef.align, Align::Para);
+        assert_eq!(segdef.combine, Combine::Public);
+
+        let segment = &state.segments[2];
+
+        assert_eq!(segment.length, 0x34f);
 
         Ok(())
     }

@@ -10,6 +10,25 @@ pub struct OmfVec<T> where T: Sized {
     data: Vec<T>,
 }
 
+pub struct Iter<'a, T> {
+    vec: &'a OmfVec<T>,
+    index: usize
+}
+
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.vec.len() {
+            self.index += 1;
+            let value = &self.vec[self.index];
+            Some(value)
+        } else {
+            None
+        }
+    }
+}
+
 impl<T> OmfVec<T> {
     /// Construct
     /// 
@@ -34,6 +53,18 @@ impl<T> OmfVec<T> {
     ///
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    /// Check that an index is valid
+    /// 
+    pub fn is_valid_index(&self, index: usize) -> bool {
+        index > 0 && index <= self.len()
+    }
+
+    /// Return a non-mutable iterator to the vector.
+    ///
+    pub fn iter(&self) -> Iter<T> {
+        Iter{ vec: self, index: 0 }
     }
 }
 
@@ -108,5 +139,22 @@ mod test {
         assert_eq!(v.len(), 1);
 
         v[2];
+    }
+
+    #[test]
+    fn iterate() {
+        let mut v = OmfVec::new();
+
+        v.push(1);
+        v.push(2);
+        v.push(3);
+
+        let mut iter = v.iter();
+
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next(), Some(&2));
+        assert_eq!(iter.next(), Some(&3));
+        assert_eq!(iter.next(), None);
+
     }
 }
