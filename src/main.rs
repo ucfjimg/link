@@ -1,5 +1,6 @@
 mod linker_error;
 mod linkstate;
+mod omf_vec;
 mod object;
 mod pass1;
 mod record;

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::linker_error::LinkerError;
+use crate::omf_vec::OmfVec;
 
 //
 // Holds collections of data parsed from each object file.
@@ -9,6 +10,7 @@ use crate::linker_error::LinkerError;
 pub struct Object {
     pub data: Option<Vec<u8>>,
     pub name: String,
+    pub lnames: OmfVec<usize>,
 }
 
 impl Object {
@@ -18,7 +20,8 @@ impl Object {
     pub fn new() -> Self {
         Object {
             data: None,
-            name: "".to_owned()
+            name: "".to_owned(),
+            lnames: OmfVec::new(),
         }
     }
 
@@ -29,6 +32,7 @@ impl Object {
         Ok(Object {
             data: Some(fs::read(name)?),
             name: "".to_owned(),
+            lnames: OmfVec::new(),
         })
     }
 }
