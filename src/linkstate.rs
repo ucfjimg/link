@@ -1,3 +1,4 @@
+use crate::group::Group;
 use crate::lnames::LNames;
 use crate::omf_vec::OmfVec;
 use crate::segment::{Segment, SegName, Align, Combine};
@@ -8,7 +9,8 @@ use crate::segment::{Segment, SegName, Align, Combine};
 
 pub struct LinkState {
     pub lnames: LNames,
-    pub segments: OmfVec<Segment>
+    pub segments: OmfVec<Segment>,
+    pub groups: OmfVec<Group>,
 }
 
 impl LinkState {
@@ -16,6 +18,7 @@ impl LinkState {
         LinkState{
             lnames: LNames::new(),
             segments: OmfVec::new(),
+            groups: OmfVec::new(),
         }
     }
 
@@ -36,11 +39,20 @@ impl LinkState {
             .find(|(_, seg)| seg.name == *segname)
             .map(|(i, _)| i + 1)
     }
+
+    pub fn get_group_named(&mut self, grpname: usize) -> Option<usize> {
+        self.groups
+            .iter()
+            .enumerate()
+            .find(|(_, grp)| grp.name == grpname)
+            .map(|(i, _)| i + 1)
+    }
+
 }
 
 #[cfg(test)]
 mod test {
-    use super::{LinkState, Segment, SegName, Align, Combine};
+    use super::{LinkState, Segment, SegName, Align, Combine, Group};
 
     #[test]
     fn get_segment_named() {
@@ -56,4 +68,18 @@ mod test {
         assert_eq!(state.get_segment_named(&SegName::new(4,8,6)), None);
     }
 
+    #[test]
+    fn get_group_named() {
+        let mut state = LinkState::new();
+
+        let group = Group::new(1);
+        state.groups.add(group);
+
+        let group = Group::new(3);
+        state.groups.add(group);
+
+
+        assert_eq!(state.get_group_named(3), Some(2));
+        assert_eq!(state.get_group_named(2), None);
+    }
 }

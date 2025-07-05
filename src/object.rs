@@ -14,6 +14,7 @@ pub struct Object {
     pub name: String,
     pub lnames: IndexMap,
     pub segdefs: OmfVec<SegDef>,
+    pub grpdefs: IndexMap,
 }
 
 impl Object {
@@ -26,6 +27,7 @@ impl Object {
             name: "".to_owned(),
             lnames: IndexMap::new(),
             segdefs: OmfVec::new(),
+            grpdefs: IndexMap::new(),
         }
     }
 
@@ -38,6 +40,7 @@ impl Object {
             name: "".to_owned(),
             lnames: IndexMap::new(),
             segdefs: OmfVec::new(),
+            grpdefs: IndexMap::new(),
         })
     }
 }

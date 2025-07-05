@@ -1,3 +1,4 @@
+mod group;
 mod index_map;
 mod linker_error;
 mod linkstate;

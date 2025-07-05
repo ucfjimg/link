@@ -1,4 +1,5 @@
 use crate::Args;
+use crate::group::Group;
 use crate::linker_error::LinkerError;
 use crate::linkstate::LinkState;
 use crate::object::Object;
@@ -46,6 +47,9 @@ fn pass1_lnames(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     Ok(())
 }
 
+/// Process a SEGDEF record. Complete segments are held at the linker level, and object modules
+/// contain the bounds of the segment owned by the module.
+/// 
 fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
     let acbp = rec.byte()?;
 
@@ -116,6 +120,62 @@ fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     Ok(())
 }
 
+/// Process a GRPDEF record. Map the group in the object to the (possibly just created) group
+/// in the linker, and make sure the linker state contains all of the referenced segments.
+/// 
+fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
+    let nameidx = rec.index()?;
+
+    if !(obj.lnames.is_valid_index(nameidx)) {
+        return Err(LinkerError::new(
+            &format!("invalid name {} for GRPDEF", nameidx)
+        ));
+    }
+
+    let nameidx = obj.lnames.get(nameidx);
+
+    //
+    // Get or add the linker-level group.
+    //
+    let index = if let Some(index) = state.get_group_named(nameidx) {
+        index
+    } else {
+        let group = Group::new(nameidx);
+        state.groups.add(group)
+    };
+
+    let group = &mut state.groups[index];
+
+    //
+    // Walk the rest of the segments to add to the group.
+    //
+    while !rec.end() {
+        //
+        // There is an unused type field before every segment.
+        //
+        rec.byte()?;
+
+        let segidx = rec.index()?;
+
+        if !obj.segdefs.is_valid_index(segidx) {
+            return Err(LinkerError::new(
+                &format!("invalid segment index {} in GRPDEF", segidx)
+            ));
+        }
+        
+        //
+        // Get the linker-level segment index.
+        //
+        let segidx = obj.segdefs[segidx].segidx;
+
+        group.add(segidx);
+    }
+
+    Ok(())
+}
+
+
+
 /// Parse one object file in the context of pass 1. 
 ///
 fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str) -> Result<(), LinkerError> {
@@ -129,6 +189,8 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
             RecordType::THEADR => pass1_theadr(obj, &mut rec)?,
             RecordType::COMENT => {},
             RecordType::LNAMES => pass1_lnames(obj, state, &mut rec)?,
+            RecordType::SEGDEF => pass1_segdef(obj, state, &mut rec)?,
+            RecordType::GRPDEF => pass1_grpdef(obj, state, &mut rec)?,
             RecordType::MODEND => break,
             
             //
@@ -150,6 +212,8 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
 
 #[cfg(test)]
 mod test {
+    use crate::group::Group;
+
     use super::*;
 
     #[test]
@@ -280,6 +344,94 @@ mod test {
         let segment = &state.segments[2];
 
         assert_eq!(segment.length, 0x34f);
+
+        Ok(())
+    }
+
+    #[test]
+    fn grpdef_new() -> Result<(), LinkerError> {
+        //                                     NAME  ---   SEG0  ---   SEG1  
+        let rec = [ 0x9a, 0x06, 0x00, 0x04, 0xFF, 0x01, 0xFF, 0x02, 0xff ];
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        state.lnames.add("");
+
+        obj.lnames.add(state.lnames.add("_TEXT"));     // index 1 == _TEXT
+        obj.lnames.add(state.lnames.add("CODE"));      // index 2 == CODE
+        obj.lnames.add(state.lnames.add("DATA"));      // index 3 == DATA
+        obj.lnames.add(state.lnames.add("DGROUP"));    // index 4 == DRGROUP
+
+        let seg = Segment::new(SegName::new(0, 0, 0), 0, Align::Byte, Combine::Private);
+        state.segments.push(seg);
+
+        let seg = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
+        let index = state.segments.add(seg);
+
+        let segdef = SegDef::new(index, 100, Align::Byte, Combine::Public); 
+        obj.segdefs.push(segdef);
+
+        let seg = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
+        let index = state.segments.add(seg);
+
+        let segdef = SegDef::new(index, 200, Align::Byte, Combine::Public); 
+        obj.segdefs.push(segdef);
+
+        pass1_grpdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(state.groups.len(), 1);
+
+        assert!(state.groups[1].has(2));
+        assert!(state.groups[1].has(3));
+
+        Ok(())
+    }
+
+    #[test]
+    fn grpdef_add() -> Result<(), LinkerError> {
+        //                                     NAME  ---   SEG0  ---   SEG1  
+        let rec = [ 0x9a, 0x06, 0x00, 0x04, 0xFF, 0x01, 0xFF, 0x02, 0xff ];
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        state.lnames.add("");
+
+        obj.lnames.add(state.lnames.add("_TEXT"));     // index 1 == _TEXT
+        obj.lnames.add(state.lnames.add("CODE"));      // index 2 == CODE
+        obj.lnames.add(state.lnames.add("DATA"));      // index 3 == DATA
+        obj.lnames.add(state.lnames.add("DGROUP"));    // index 4 == DRGROUP
+
+        let seg = Segment::new(SegName::new(0, 0, 0), 0, Align::Byte, Combine::Private);
+        state.segments.push(seg);
+
+        let seg = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
+        let index = state.segments.add(seg);
+
+        let segdef = SegDef::new(index, 100, Align::Byte, Combine::Public); 
+        obj.segdefs.push(segdef);
+
+        let seg = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
+        let index = state.segments.add(seg);
+
+        let segdef = SegDef::new(index, 200, Align::Byte, Combine::Public); 
+        obj.segdefs.push(segdef);
+
+        let mut group = Group::new(5);
+        group.add(1);
+
+        state.groups.add(group);
+
+        pass1_grpdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(state.groups.len(), 1);
+
+        assert!(state.groups[1].has(1));
+        assert!(state.groups[1].has(2));
+        assert!(state.groups[1].has(3));
 
         Ok(())
     }
