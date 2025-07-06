@@ -1,5 +1,6 @@
 mod group;
 mod index_map;
+mod library;
 mod linker_error;
 mod linkstate;
 mod lnames;
@@ -9,6 +10,9 @@ mod pass1;
 mod record;
 mod segment;
 mod symbols;
+
+#[cfg(test)]
+mod testlib;
 
 use clap::Parser;
 use std::path::PathBuf;

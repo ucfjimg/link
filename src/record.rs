@@ -129,6 +129,13 @@ impl<'a> Record<'a> {
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
+    /// Extract the next LE dword from the record.
+    ///
+    pub fn dword(&mut self) -> Result<u32, LinkerError> {
+        let bytes = self.get(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
     /// Extract the next packed index from the record.
     /// 
     pub fn index(&mut self) -> Result<usize, LinkerError> {
@@ -293,6 +300,30 @@ mod test
         let rec = [0x88, 0x02, 0x00, 0x34, 0x12];
         let mut rec = Record::new(&rec)?;
         assert!(rec.word().is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn dword_ok() -> Result<(), LinkerError> {
+        //
+        // Count is too short
+        //
+        let rec = [0x88, 0x05, 0x00, 0x78, 0x56, 0x34, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert_eq!(rec.dword()?, 0x12345678);
+
+        Ok(())
+    }
+
+    #[test]
+    fn dword_truncated() -> Result<(), LinkerError> {
+        //
+        // Count is too short
+        //
+        let rec = [0x88, 0x04, 0x00, 0x78, 0x56, 0x34, 0x12];
+        let mut rec = Record::new(&rec)?;
+        assert!(rec.dword().is_err());
 
         Ok(())
     }

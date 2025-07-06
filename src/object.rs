@@ -46,4 +46,18 @@ impl Object {
             extdefs: OmfVec::new(),
         })
     }
+
+    //
+    // Construct around an existing byte slice.
+    //
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        Object {
+            data: Some(data),
+            name: "".to_owned(),
+            lnames: IndexMap::new(),
+            segdefs: OmfVec::new(),
+            grpdefs: IndexMap::new(),
+            extdefs: OmfVec::new(),
+        }
+    }
 }
