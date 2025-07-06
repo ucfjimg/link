@@ -6,6 +6,7 @@ use std::ops::{Index, IndexMut};
 // but panics if the index is zero as well as out of range.
 //
 
+#[derive(Debug)]
 pub struct OmfVec<T> where T: Sized {
     data: Vec<T>,
 }

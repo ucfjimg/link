@@ -301,7 +301,7 @@ impl Library {
             // If the block wasn't full, then we can safely stop with failure.
             //
             let next_free = self.data[block_offset + BLOCK_BUCKETS];
-            if next_free == 0xff {
+            if next_free != 0xff {
                 break;
             }
 

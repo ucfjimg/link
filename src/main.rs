@@ -84,7 +84,7 @@ fn main() -> Result<(), LinkerError> {
     let mut objects = Vec::new();
     let libs = get_libs(&args)?;
 
-    pass1(&mut linkstate, &mut objects, &args)?;
+    pass1(&mut linkstate, &mut objects, &libs, &args)?;
 
     println!("OBJECTS");
     for obj in objects.iter() {

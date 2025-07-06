@@ -1,11 +1,38 @@
 use crate::Args;
 use crate::group::Group;
+use crate::library::Library;
 use crate::linker_error::LinkerError;
 use crate::linkstate::LinkState;
 use crate::object::Object;
 use crate::record::{Record, RecordType};
 use crate::segment::{Segment, SegDef, SegName, Align, Combine};
 use crate::symbols::Symbol;
+
+#[derive(PartialEq, Clone, Copy)]
+struct LibraryModule {
+    lib: usize,
+    modpage: usize,
+}
+
+struct LibraryModules {
+    mods: Vec<LibraryModule>,
+}
+
+impl LibraryModules {
+    pub fn new() -> Self {
+        LibraryModules { mods: Vec::new() }
+    } 
+
+    pub fn has(&self, module: LibraryModule) -> bool {
+        self.mods.iter().find(|m| *m == &module).is_some()
+    }
+
+    pub fn add(&mut self, module: LibraryModule) {
+        if !self.has(module) {
+            self.mods.push(module);
+        }
+    }
+}
 
 //
 // Pass 1 logic
@@ -14,18 +41,72 @@ use crate::symbols::Symbol;
 /// Execute pass 1. 
 /// - Parse all objects from the command line.
 /// 
-pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> Result<(), LinkerError> {
+pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, libs: &[Library], args: &Args) -> Result<(), LinkerError> {
     //
     // Execute pass 1 on all command line object files
     //
     for objname in args.objects.iter() {
-        println!("object {:?}", objname);
         let mut obj = Object::from_filename(objname)?;
         let data = obj.data.take().unwrap();
         pass1_object(state, &data, &mut obj, objname.as_os_str().to_str().unwrap())?;
         obj.data = Some(data);
         objects.push(obj);
     }
+
+    let mut mods = LibraryModules::new();
+
+    loop {
+        //
+        // Walk the library list looking for undefined symbols.
+        //
+        let undefined = state.symbols.undefined_symbols();
+
+        if undefined.is_empty() {
+            break;
+        }
+
+        let mut still_undefined = Vec::new();
+
+        let old_mods = mods.mods.len();
+
+        for sym in undefined {
+            for (libidx, lib) in libs.iter().enumerate() {
+                let modpage = lib.find_symbol_in_dictionary(sym)?;
+                if let Some(modpage) = modpage {
+                    mods.add(LibraryModule { lib: libidx, modpage });
+                } else {
+                    still_undefined.push(sym);
+                }             
+            }
+        }
+
+        //
+        // If there are still undefined symbols after we have search the libraries, then 
+        // those symbols are never going to be defined and we can give up.
+        //
+        if !still_undefined.is_empty() {
+            for sym in still_undefined.iter() {
+                println!("undefined external: {}", sym);
+            }
+            return Err(LinkerError::new(&format!("{} undefined externals.", still_undefined.len())));
+        }
+
+        for module in mods.mods.iter().skip(old_mods) {
+            let lib = &libs[module.lib];
+            println!("add {} modpage {}", lib.name, module.modpage);
+
+            let objname = format!("{}@{:x}", lib.name, module.modpage);
+
+            let mut obj = libs[module.lib].extract_module(module.modpage)?;
+            let data = obj.data.take().unwrap();
+            pass1_object(state, &data, &mut obj, &objname)?;
+            obj.data = Some(data);
+            objects.push(obj);
+        }
+    }
+
+
+
 
     Ok(())
 }
@@ -74,6 +155,8 @@ fn pass1_pubdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     let frame = if segment == 0 { rec.word()? } else { 0 };
 
     if !obj.grpdefs.is_valid_index(group) {
+        println!("grpdefs {:?}", obj.grpdefs);
+
         return Err(LinkerError::new(
             &format!("invalid group index {} in PUBDEF", group)
         ));
@@ -178,7 +261,6 @@ fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     //
     // Get or add the linker-level segment.
     //
-    println!("adding segdef {:?}", segname);
     let index = if let Some(index) = state.get_segment_named(&segname) {
         index
     } else {
@@ -218,10 +300,10 @@ fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     } else {
         let group = Group::new(nameidx);
         let index = state.groups.add(group);
-        obj.grpdefs.add(index);
         index
     };
 
+    obj.grpdefs.add(index);
     let group = &mut state.groups[index];
 
     //
@@ -261,14 +343,14 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
         let mut rec = Record::new(&data[start..])?;
         let reclen = rec.total_length();
 
-        match rec.rectype {
-            RecordType::THEADR => pass1_theadr(obj, &mut rec)?,
-            RecordType::EXTDEF => pass1_extdef(obj, state, &mut rec)?,
-            RecordType::COMENT => {},
-            RecordType::PUBDEF => pass1_pubdef(obj, state, &mut rec)?,
-            RecordType::LNAMES => pass1_lnames(obj, state, &mut rec)?,
-            RecordType::SEGDEF => pass1_segdef(obj, state, &mut rec)?,
-            RecordType::GRPDEF => pass1_grpdef(obj, state, &mut rec)?,
+        let result = match rec.rectype {
+            RecordType::THEADR => pass1_theadr(obj, &mut rec),
+            RecordType::EXTDEF => pass1_extdef(obj, state, &mut rec),
+            RecordType::COMENT => Ok(()),
+            RecordType::PUBDEF => pass1_pubdef(obj, state, &mut rec),
+            RecordType::LNAMES => pass1_lnames(obj, state, &mut rec),
+            RecordType::SEGDEF => pass1_segdef(obj, state, &mut rec),
+            RecordType::GRPDEF => pass1_grpdef(obj, state, &mut rec),
             RecordType::MODEND => break,
             
             //
@@ -276,11 +358,21 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
             //
             RecordType::LEDATA |
             RecordType::LIDATA |
-            RecordType::FIXUPP => {},
+            RecordType::FIXUPP => Ok(()),
 
-            _ => eprintln!("pass1: {}: unhandled record {:?} at offset {:05X}H", name, rec.rectype, start),
-        }
+            _ => Err(LinkerError::new(&format!("unhandled record {:?}", rec.rectype))),
+        };
 
+        match result { 
+            Err(err) => {
+                let modname = if obj.name.is_empty() { "".to_owned() } else { format!(" (module {})", obj.name) };
+
+                return Err(LinkerError::new(                    
+                    &format!("pass1: module {}{} at {:05X}H: {}", name, modname, start, err.to_string())
+                ));
+            },
+            Ok(_) => {},
+        };
 
         start += reclen;
     }

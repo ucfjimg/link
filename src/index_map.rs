@@ -5,6 +5,7 @@ use crate::omf_vec::OmfVec;
 // Like an OmfVec<usize> except that 0 (no such entry) is valid and maps to 0.
 //
 
+#[derive(Debug)]
 pub struct IndexMap {
     indices: OmfVec<usize>,
 }
