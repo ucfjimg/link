@@ -15,6 +15,9 @@ use crate::symbols::Symbol;
 /// - Parse all objects from the command line.
 /// 
 pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> Result<(), LinkerError> {
+    //
+    // Execute pass 1 on all command line object files
+    //
     for objname in args.objects.iter() {
         println!("object {:?}", objname);
         let mut obj = Object::from_filename(objname)?;

@@ -17,6 +17,7 @@ mod testlib;
 use clap::Parser;
 use std::path::PathBuf;
 use std::process::exit;
+use library::Library;
 use linker_error::LinkerError;
 use linkstate::LinkState;
 use pass1::pass1;
@@ -28,6 +29,8 @@ pub struct Args {
     pub output: Option<PathBuf>,
     #[arg(short)]
     pub libpath: Vec<PathBuf>,
+    #[arg(short = 'L')]
+    pub libs: Vec<PathBuf>,
     pub objects: Vec<PathBuf>,
 }
 
@@ -51,11 +54,35 @@ fn get_args() -> Args {
     args
 }
 
+/// Locate and preload libraries on the command line
+/// 
+fn get_libs(args: &Args) -> Result<Vec<Library>, LinkerError> {
+    let mut libs = Vec::new();
+
+    for lib in args.libs.iter() {
+        let libpath = if lib.exists() {
+            Some(lib.clone())
+        } else {
+            args.libpath.iter().map(|path| path.join(lib)).find(|path| path.exists())
+        };
+
+        let library = match libpath {
+            Some(path) => Library::new(lib.as_os_str().to_str().unwrap(), path)?,
+            None => return Err(LinkerError::new(&format!("library {:?} not found in current directory or library path.", lib))),
+        };
+
+        libs.push(library);
+    }
+
+    Ok(libs)
+}
+
 fn main() -> Result<(), LinkerError> {
     let args = get_args();
 
     let mut linkstate = LinkState::new();
     let mut objects = Vec::new();
+    let libs = get_libs(&args)?;
 
     pass1(&mut linkstate, &mut objects, &args)?;
 
