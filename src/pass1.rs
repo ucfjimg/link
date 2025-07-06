@@ -53,6 +53,12 @@ pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, libs: &[Library],
         objects.push(obj);
     }
 
+    pass1_add_library_modules(state, libs, objects)?;
+
+    Ok(())
+}
+
+fn pass1_add_library_modules(state: &mut LinkState, libs: &[Library], objects: &mut Vec<Object>) -> Result<(), LinkerError> {
     let mut mods = LibraryModules::new();
 
     loop {
@@ -104,9 +110,6 @@ pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, libs: &[Library],
             objects.push(obj);
         }
     }
-
-
-
 
     Ok(())
 }
