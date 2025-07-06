@@ -15,6 +15,7 @@ pub struct Object {
     pub lnames: IndexMap,
     pub segdefs: OmfVec<SegDef>,
     pub grpdefs: IndexMap,
+    pub extdefs: OmfVec<String>,
 }
 
 impl Object {
@@ -28,6 +29,7 @@ impl Object {
             lnames: IndexMap::new(),
             segdefs: OmfVec::new(),
             grpdefs: IndexMap::new(),
+            extdefs: OmfVec::new(),
         }
     }
 
@@ -41,6 +43,7 @@ impl Object {
             lnames: IndexMap::new(),
             segdefs: OmfVec::new(),
             grpdefs: IndexMap::new(),
+            extdefs: OmfVec::new(),
         })
     }
 }

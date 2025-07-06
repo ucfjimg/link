@@ -1,7 +1,11 @@
 use crate::group::Group;
 use crate::lnames::LNames;
 use crate::omf_vec::OmfVec;
-use crate::segment::{Segment, SegName, Align, Combine};
+use crate::segment::{Segment, SegName};
+use crate::symbols::SymbolTable;
+
+#[cfg(test)]
+use crate::segment::{Align, Combine};
 
 //
 // Linker-global data
@@ -11,6 +15,7 @@ pub struct LinkState {
     pub lnames: LNames,
     pub segments: OmfVec<Segment>,
     pub groups: OmfVec<Group>,
+    pub symbols: SymbolTable,
 }
 
 impl LinkState {
@@ -19,6 +24,7 @@ impl LinkState {
             lnames: LNames::new(),
             segments: OmfVec::new(),
             groups: OmfVec::new(),
+            symbols: SymbolTable::new(),
         }
     }
 

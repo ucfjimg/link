@@ -5,6 +5,7 @@ use crate::linkstate::LinkState;
 use crate::object::Object;
 use crate::record::{Record, RecordType};
 use crate::segment::{Segment, SegDef, SegName, Align, Combine};
+use crate::symbols::Symbol;
 
 //
 // Pass 1 logic
@@ -30,6 +31,35 @@ pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 fn pass1_theadr(obj: &mut Object, rec: &mut Record) -> Result<(), LinkerError> {
     obj.name = rec.counted_string()?;
     
+    Ok(())
+}
+
+// Handle an EXTDEF record, which maps an index in the object module to a symbol
+// name to be resolved elsewhere.
+//
+fn pass1_extdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
+
+    while !rec.end() {
+        let name = rec.counted_string()?;
+
+        //
+        // there is an unused type index after every name.
+        //
+        rec.index()?;
+
+        //
+        // Put the symbol in the symbol table, if it isn't already there,
+        // as an undefined reference.
+        //
+        let symbol = Symbol::Undefined;
+        state.symbols.update(&name, symbol)?;
+
+        //
+        // The name goes in the object's external definitions.
+        //
+        obj.extdefs.add(name.clone());
+    }
+
     Ok(())
 }
 
@@ -141,7 +171,9 @@ fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
         index
     } else {
         let group = Group::new(nameidx);
-        state.groups.add(group)
+        let index = state.groups.add(group);
+        obj.grpdefs.add(index);
+        index
     };
 
     let group = &mut state.groups[index];
@@ -174,8 +206,6 @@ fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     Ok(())
 }
 
-
-
 /// Parse one object file in the context of pass 1. 
 ///
 fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str) -> Result<(), LinkerError> {
@@ -187,6 +217,7 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
 
         match rec.rectype {
             RecordType::THEADR => pass1_theadr(obj, &mut rec)?,
+            RecordType::EXTDEF => pass1_extdef(obj, state, &mut rec)?,
             RecordType::COMENT => {},
             RecordType::LNAMES => pass1_lnames(obj, state, &mut rec)?,
             RecordType::SEGDEF => pass1_segdef(obj, state, &mut rec)?,
@@ -213,6 +244,7 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
 #[cfg(test)]
 mod test {
     use crate::group::Group;
+    use crate::symbols::Symbol;
 
     use super::*;
 
@@ -379,7 +411,13 @@ mod test {
         let segdef = SegDef::new(index, 200, Align::Byte, Combine::Public); 
         obj.segdefs.push(segdef);
 
+        assert_eq!(obj.grpdefs.len(), 0);
+
         pass1_grpdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(obj.grpdefs.len(), 1);
+        assert_eq!(obj.grpdefs.get(1), 1);
+
 
         assert_eq!(state.groups.len(), 1);
 
@@ -432,6 +470,38 @@ mod test {
         assert!(state.groups[1].has(1));
         assert!(state.groups[1].has(2));
         assert!(state.groups[1].has(3));
+
+        Ok(())
+    }
+
+    #[test]
+    fn extdef() -> Result<(), LinkerError> {
+        let rec = [ 
+            0x9a, 0x0b, 0x00, 
+            0x03, 0x41, 0x42, 0x43, 0x02, 
+            0x03, 0x44, 0x45, 0x46, 0x02, 
+            0xff ];
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        pass1_extdef(&mut obj, &mut state, &mut rec)?;
+
+        assert_eq!(obj.extdefs.len(), 2);
+        assert_eq!(obj.extdefs[1], "ABC");
+        assert_eq!(obj.extdefs[2], "DEF");
+
+        //
+        // EXTDEF's also get put into the symbol table as undefined's
+        //
+        let symbol = state.symbols.symbols.get("ABC");
+
+        match symbol {
+            Some(Symbol::Undefined) => {},
+            None => panic!("Symbol was not added as undefined."),
+            _ => panic!("Symbol was added as something else {:?}", symbol),
+        }
 
         Ok(())
     }

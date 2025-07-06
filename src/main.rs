@@ -8,6 +8,7 @@ mod object;
 mod pass1;
 mod record;
 mod segment;
+mod symbols;
 
 use clap::Parser;
 use std::path::PathBuf;
