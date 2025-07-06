@@ -16,6 +16,7 @@ use std::process::exit;
 use linker_error::LinkerError;
 use linkstate::LinkState;
 use pass1::pass1;
+use crate::symbols::Symbol;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -53,6 +54,48 @@ fn main() -> Result<(), LinkerError> {
     let mut objects = Vec::new();
 
     pass1(&mut linkstate, &mut objects, &args)?;
+
+    println!("OBJECTS");
+    for obj in objects.iter() {
+        println!("*** {}", obj.name);
+        println!("EXTERNS");
+        for ext in obj.extdefs.iter() {
+            println!("  {}", ext);
+        }
+
+        println!("SEGDEFS");
+        for segdef in obj.segdefs.iter() {
+            println!("  #{:02} {:05X}H {:05X}H {:?} {:?}", segdef.segidx, segdef.base, segdef.length, segdef.align, segdef.combine);
+        }
+        println!();
+    }
+
+    println!("SEGMENTS");
+    for (i,seg)  in linkstate.segments.iter().enumerate().map(|(i, seg) | (i+1, seg)) {
+        let segname = linkstate.segname(&seg.name);
+        println!("#{:02} {:30} {:05X}H {:?} {:?}", i, segname, seg.length, seg.align, seg.combine); 
+    }
+    println!();
+
+    println!("SYMBOLS");
+
+    let mut symnames = linkstate.symbols.symbols.keys().map(|name| &name[..]).collect::<Vec<&str>>();
+    symnames.sort();
+
+
+    for name in symnames {
+        let sym = linkstate.symbols.symbols.get(name).unwrap();
+        print!("  {:30} ", name);
+
+        match sym {
+            Symbol::Undefined => print!("UND"),
+            Symbol::Public(p) => print!("PUB GROUP {:2} SEG {:2} FRAME {:04X}H {:05X}H", p.group, p.segment, p.frame, p.offset),
+            Symbol::Common(_) => print!("COM"),
+            _ => {},
+        }
+
+        println!();
+    }
 
     Ok(())
 }
