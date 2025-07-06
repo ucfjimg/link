@@ -19,6 +19,13 @@ impl LNames {
         self.names.add(name.to_owned())
     }
 
+    pub fn find_or_add(&mut self, name: &str) -> usize {
+        match self.names.iter().enumerate().find(|(_, n)| *n == name) {
+            Some((x, _)) => x+1,
+            None => self.add(name)
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.names.len()
     }
@@ -61,4 +68,17 @@ mod test {
         lnames.get(2);
     }
 
+    #[test]
+    fn find_or_add() {
+        let mut lnames = LNames::new();
+
+        assert_eq!(lnames.len(), 0);
+        assert_eq!(lnames.add("ABC"), 1);
+        assert_eq!(lnames.len(), 1);
+
+        assert_eq!(lnames.find_or_add("ABC"), 1);
+        assert_eq!(lnames.len(), 1);
+        assert_eq!(lnames.find_or_add("DEF"), 2);
+        assert_eq!(lnames.len(), 2);
+    }
 }

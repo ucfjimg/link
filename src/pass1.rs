@@ -16,6 +16,7 @@ use crate::symbols::Symbol;
 /// 
 pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> Result<(), LinkerError> {
     for objname in args.objects.iter() {
+        println!("object {:?}", objname);
         let mut obj = Object::from_filename(objname)?;
         let data = obj.data.take().unwrap();
         pass1_object(state, &data, &mut obj, objname.as_os_str().to_str().unwrap())?;
@@ -111,7 +112,7 @@ fn pass1_pubdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
 fn pass1_lnames(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
     while !rec.end() {
         let lname = rec.counted_string()?;
-        let index = state.lnames.add(&lname);
+        let index = state.lnames.find_or_add(&lname);
         obj.lnames.add(index);
     }
     
@@ -174,6 +175,7 @@ fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
     //
     // Get or add the linker-level segment.
     //
+    println!("adding segdef {:?}", segname);
     let index = if let Some(index) = state.get_segment_named(&segname) {
         index
     } else {

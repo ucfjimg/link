@@ -105,7 +105,7 @@ impl SegDef {
 /// The name of a segment is the triple of it's name, class, and overlay lnames.
 /// These are indices into the global lnames table.
 /// 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SegName {
     pub nameidx: usize,
     pub classidx: usize,
