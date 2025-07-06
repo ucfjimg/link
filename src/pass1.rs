@@ -38,7 +38,6 @@ fn pass1_theadr(obj: &mut Object, rec: &mut Record) -> Result<(), LinkerError> {
 // name to be resolved elsewhere.
 //
 fn pass1_extdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
-
     while !rec.end() {
         let name = rec.counted_string()?;
 
@@ -58,6 +57,48 @@ fn pass1_extdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
         // The name goes in the object's external definitions.
         //
         obj.extdefs.add(name.clone());
+    }
+
+    Ok(())
+}
+
+// Handle a PUBDEF record, which defines a symbol with an offset in a segment and/or group.
+//
+fn pass1_pubdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
+    let group = rec.index()?;
+    let segment = rec.index()?;
+    let frame = if segment == 0 { rec.word()? } else { 0 };
+
+    if !obj.grpdefs.is_valid_index(group) {
+        return Err(LinkerError::new(
+            &format!("invalid group index {} in PUBDEF", group)
+        ));
+    }
+
+    let group = obj.grpdefs.get(group);
+
+    let segment = if segment == 0 {
+        0
+    } else {
+        if segment != 0 && !obj.segdefs.is_valid_index(segment) {
+            return Err(LinkerError::new(
+                &format!("invalid segment index {} in PUBDEF", segment)
+            ));
+        }
+        obj.segdefs[segment].segidx
+    };
+
+    while !rec.end() {
+        let name = rec.counted_string()?;
+        let offset = rec.word()?;
+
+        //
+        // There is an unused type index after each symbol.
+        //
+        rec.index()?;
+
+        let symbol = Symbol::public(group, segment, frame, offset);
+        state.symbols.update(&name, symbol)?;
     }
 
     Ok(())
@@ -219,6 +260,7 @@ fn pass1_object(state: &mut LinkState, data: &[u8], obj: &mut Object, name: &str
             RecordType::THEADR => pass1_theadr(obj, &mut rec)?,
             RecordType::EXTDEF => pass1_extdef(obj, state, &mut rec)?,
             RecordType::COMENT => {},
+            RecordType::PUBDEF => pass1_pubdef(obj, state, &mut rec)?,
             RecordType::LNAMES => pass1_lnames(obj, state, &mut rec)?,
             RecordType::SEGDEF => pass1_segdef(obj, state, &mut rec)?,
             RecordType::GRPDEF => pass1_grpdef(obj, state, &mut rec)?,
@@ -418,7 +460,6 @@ mod test {
         assert_eq!(obj.grpdefs.len(), 1);
         assert_eq!(obj.grpdefs.get(1), 1);
 
-
         assert_eq!(state.groups.len(), 1);
 
         assert!(state.groups[1].has(2));
@@ -501,6 +542,77 @@ mod test {
             Some(Symbol::Undefined) => {},
             None => panic!("Symbol was not added as undefined."),
             _ => panic!("Symbol was added as something else {:?}", symbol),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn pubdefs() -> Result<(), LinkerError> {
+        let rec = [ 
+            0x9a, 0x11, 0x00,
+            0x01,                           // base group index
+            0x02,                           // base segment index
+            0x03, 0x41, 0x42, 0x43, 0x34, 0x12, 0x02, 
+            0x03, 0x44, 0x45, 0x46, 0x78, 0x56, 0x02, 
+            0xff ];
+        let mut rec = Record::new(&rec)?;
+
+        let mut obj = Object::new();
+        let mut state: LinkState = LinkState::new();
+
+        state.lnames.add("");
+        obj.lnames.add(state.lnames.add("_TEXT"));     // index 1 == _TEXT
+        obj.lnames.add(state.lnames.add("CODE"));      // index 2 == CODE
+        obj.lnames.add(state.lnames.add("DATA"));      // index 3 == DATA
+        obj.lnames.add(state.lnames.add("DGROUP"));    // index 4 == DRGROUP
+        obj.lnames.add(state.lnames.add("ZGROUP"));    // index 5 == ZRGROUP
+
+
+        let group = Group::new(5);
+        state.groups.add(group);
+
+        let group = Group::new(4);
+        obj.grpdefs.add(state.groups.add(group));
+
+        let segment = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
+        state.segments.add(segment);
+        
+        let segment = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
+        let segidx = state.segments.add(segment);
+        obj.segdefs.add(SegDef::new(segidx, 100, Align::Byte, Combine::Public));
+
+        let segment = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
+        let segidx = state.segments.add(segment);
+        obj.segdefs.add(SegDef::new(segidx, 100, Align::Byte, Combine::Public));
+
+        pass1_pubdef(&mut obj, &mut state, &mut rec)?;
+
+        let symbol = state.symbols.symbols.get("ABC");
+
+        match symbol {
+            Some(Symbol::Public(public)) => {
+                assert_eq!(public.segment, 3);
+                assert_eq!(public.group, 2);
+                assert_eq!(public.frame, 0);
+                assert_eq!(public.offset, 0x1234);
+            },
+            None => panic!("Symbol ABC not added"),
+            _ => panic!("Symbol ABC had an invalid value {:?}", symbol)
+        }
+        
+
+        let symbol = state.symbols.symbols.get("DEF");
+
+        match symbol {
+            Some(Symbol::Public(public)) => {
+                assert_eq!(public.segment, 3);
+                assert_eq!(public.group, 2);
+                assert_eq!(public.frame, 0);
+                assert_eq!(public.offset, 0x5678);
+            },
+            None => panic!("Symbol DEF not added"),
+            _ => panic!("Symbol DEF had an invalid value {:?}", symbol)
         }
 
         Ok(())
