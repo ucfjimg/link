@@ -1,3 +1,4 @@
+mod dosexe;
 mod group;
 mod index_map;
 mod library;
@@ -15,11 +16,14 @@ mod symbols;
 mod testlib;
 
 use clap::Parser;
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
 use library::Library;
 use linker_error::LinkerError;
 use linkstate::LinkState;
+use object::Object;
 use pass1::pass1;
 use symbols::Symbol;
 
@@ -27,6 +31,8 @@ use symbols::Symbol;
 pub struct Args {
     #[arg(short)]
     pub output: Option<PathBuf>,
+    #[arg(short = 'm')]
+    pub linkmap: Option<PathBuf>,
     #[arg(short)]
     pub libpath: Vec<PathBuf>,
     #[arg(short = 'L')]
@@ -77,28 +83,24 @@ fn get_libs(args: &Args) -> Result<Vec<Library>, LinkerError> {
     Ok(libs)
 }
 
-fn main() -> Result<(), LinkerError> {
-    let args = get_args();
+/// After pass 1, write out the link map if requested.
+///
+fn write_linkmap(linkmap: &PathBuf, linkstate: &LinkState, objects: &[Object]) -> Result<(), LinkerError> {
+    let mut fp = File::create(linkmap)?;
 
-    let mut linkstate = LinkState::new();
-    let mut objects = Vec::new();
-    let libs = get_libs(&args)?;
-
-    pass1(&mut linkstate, &mut objects, &libs, &args)?;
-
-    println!("\n Start  Stop   Length Name               Class\n");
+    writeln!(&mut fp, "\n Start  Stop   Length Name               Class\n")?;
     for segidx in linkstate.segment_order.iter().map(|x| *x) {
         let seg = &linkstate.segments[segidx];
 
-        println!(" {:05X}H {:05X}H {:05X}H {:18} {}", 
+        writeln!(&mut fp, " {:05X}H {:05X}H {:05X}H {:18} {}", 
             seg.base,
             if seg.length == 0 { seg.base } else { seg.base + seg.length - 1},
             seg.length, 
             linkstate.lnames.get(seg.name.nameidx), 
-            linkstate.lnames.get(seg.name.classidx));
+            linkstate.lnames.get(seg.name.classidx))?;
     }
     
-    println!("\n\nDetailed map of segments\n");
+    writeln!(&mut fp, "\n\nDetailed map of segments\n")?;
 
     for segidx in linkstate.segment_order.iter() {
         let seg = &linkstate.segments[*segidx];
@@ -115,7 +117,7 @@ fn main() -> Result<(), LinkerError> {
                     let offset = (base & 0x000f) + (linear - base);
 
 
-                    println!(" {:04X}:{:04X} {:04X} C={:6} S={:14} G={:7} M={:10} ACBP={:02X}", 
+                    writeln!(&mut fp, " {:04X}:{:04X} {:04X} C={:6} S={:14} G={:7} M={:10} ACBP={:02X}", 
                         frame, offset, 
                         segdef.length,   
                         linkstate.lnames.get(seg.name.classidx),
@@ -123,7 +125,7 @@ fn main() -> Result<(), LinkerError> {
                         grp,
                         obj.name.to_uppercase(),
                         segdef.acbp
-                    );
+                    )?;
                 }
             }
         }
@@ -137,7 +139,7 @@ fn main() -> Result<(), LinkerError> {
         used: bool,
     }
 
-    println!("\n  Address         Publics by Name\n");
+    writeln!(&mut fp, "\n  Address         Publics by Name\n")?;
 
     let mut symbols = linkstate.symbols.symbols.keys().map(|name| name.to_owned()).collect::<Vec<String>>();
     symbols.sort();
@@ -185,18 +187,33 @@ fn main() -> Result<(), LinkerError> {
         });
 
         let used = if used { "    " } else { "idle" };
-        println!(" {:04X}:{:04X} {used}  {}", frame, offset, name.to_uppercase());
+        writeln!(&mut fp, " {:04X}:{:04X} {used}  {}", frame, offset, name.to_uppercase())?;
     }
 
     byvalue.sort_by_key(|sym| sym.linear);
 
-    println!("\n  Address         Publics by Value\n");
+    writeln!(&mut fp, "\n  Address         Publics by Value\n")?;
 
     for sym in byvalue.iter() {
         let used = if sym.used { "    " } else { "idle" };
-        println!(" {:04X}:{:04X} {used}  {}", sym.frame, sym.offset, sym.name.to_uppercase());
+        writeln!(&mut fp, " {:04X}:{:04X} {used}  {}", sym.frame, sym.offset, sym.name.to_uppercase())?;
     }
+    
+    Ok(())
+}
 
+fn main() -> Result<(), LinkerError> {
+    let args = get_args();
+
+    let mut linkstate = LinkState::new();
+    let mut objects = Vec::new();
+    let libs = get_libs(&args)?;
+
+    pass1(&mut linkstate, &mut objects, &libs, &args)?;
+
+    if let Some(linkmap) = &args.linkmap {
+        write_linkmap(linkmap, &linkstate, &objects)?;
+    }
 
     Ok(())
 }
