@@ -230,7 +230,7 @@ fn pass1_build_memory_map(state: &mut LinkState) -> Result<(), LinkerError> {
     //
     // Compute linear base addresses of groups.
     //
-    for i in 1..state.groups.len() {
+    for i in 1..=state.groups.len() {
         let group = &mut state.groups[i];
         let base = group.iter().min_by(|x, y| state.segments[*x].base.cmp(&state.segments[*y].base)).unwrap_or(0);
 

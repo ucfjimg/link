@@ -8,6 +8,7 @@ pub struct PublicSymbol {
     pub segment: usize,
     pub frame: u16,
     pub offset: u16,
+    pub used: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -28,7 +29,7 @@ pub enum Symbol {
 
 impl Symbol {
     pub fn public(group: usize, segment: usize, frame: u16, offset: u16) -> Self {
-        Self::Public(PublicSymbol { group, segment, frame, offset })
+        Self::Public(PublicSymbol { group, segment, frame, offset, used: false })
     }
 
     pub fn common(size: u32, isfar: bool) -> Self {
@@ -55,10 +56,11 @@ impl SymbolTable {
         //
         // Check redefinition rules
         //
+        let mut exists = false;
         if symbol != Symbol::Undefined {
             if let Some(sym) = self.symbols.get(name) {
                 match sym {
-                    Symbol::Undefined => {},
+                    Symbol::Undefined => { exists = true; },
                     Symbol::Public(_) => {
                         return if let &Symbol::Public(_) = &symbol {
                             Err(LinkerError::new(&format!("Public symbol {} is multiply defined.", name)))
@@ -73,7 +75,11 @@ impl SymbolTable {
                     },
                 };
             }
-        } else if let Some(_) = self.symbols.get(name) {
+        } else if let Some(sym) = self.symbols.get_mut(name) {
+            if let Symbol::Public(public) = sym {
+                public.used = true;
+            }
+            
             //
             // Don't let a future EXTDEF undefine an existing symbol.
             //
@@ -95,6 +101,12 @@ impl SymbolTable {
         }
 
         self.symbols.insert(name.to_string(), symbol);
+
+        if exists {
+            if let Some(Symbol::Public(public)) = self.symbols.get_mut(name) {
+                public.used = true;
+            }
+        }
 
         Ok(())
     }

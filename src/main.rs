@@ -133,8 +133,9 @@ fn main() -> Result<(), LinkerError> {
         name: String,
         frame: usize,
         offset: usize,
-        linear: usize
-    };
+        linear: usize,
+        used: bool,
+    }
 
     println!("\n  Address         Publics by Name\n");
 
@@ -145,6 +146,12 @@ fn main() -> Result<(), LinkerError> {
 
     for name in symbols.iter() {
         let sym = linkstate.symbols.symbols.get(name).unwrap();
+
+        let used = if let Symbol::Public(public) = sym {
+            public.used
+        } else {
+            true
+        };
 
         let (frame,offset) = match &sym {
             &Symbol::Public(p) => {
@@ -173,10 +180,12 @@ fn main() -> Result<(), LinkerError> {
             name: name.to_owned(),
             frame,
             offset,
-            linear: (frame << 4) + offset
+            linear: (frame << 4) + offset,
+            used
         });
 
-        println!(" {:04X}:{:04X}       {}", frame, offset, name);
+        let used = if used { "    " } else { "idle" };
+        println!(" {:04X}:{:04X} {used}  {}", frame, offset, name);
     }
 
     byvalue.sort_by_key(|sym| sym.linear);
@@ -184,7 +193,8 @@ fn main() -> Result<(), LinkerError> {
     println!("\n  Address         Publics by Value\n");
 
     for sym in byvalue.iter() {
-        println!(" {:04X}:{:04X}       {}", sym.frame, sym.offset, sym.name);
+        let used = if sym.used { "    " } else { "idle" };
+        println!(" {:04X}:{:04X} {used}  {}", sym.frame, sym.offset, sym.name);
     }
 
 
