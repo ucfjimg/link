@@ -5,6 +5,7 @@
 pub struct Group {
     pub name: usize,
     members: Vec<usize>,
+    pub base: usize,
 }
 
 pub struct Iter<'a> {
@@ -31,6 +32,7 @@ impl Group {
         Group {
             name,
             members: Vec::new(),
+            base: 0,
         }
     }
 

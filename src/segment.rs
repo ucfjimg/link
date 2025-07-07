@@ -131,6 +131,7 @@ pub struct Segment {
     pub align: Align,
     pub combine: Combine,
     pub base: usize,
+    pub group: usize,
 }
 
 /// The maximum size of a 32-bit segment.
@@ -139,7 +140,7 @@ const MAX_SEGMENT_SIZE: usize = 0x10000;
 
 impl Segment {
     pub fn new(name: SegName, length: usize, align: Align, combine: Combine) -> Segment {
-        Segment{ name, length, align, combine, base: 0 }
+        Segment{ name, length, align, combine, base: 0, group: 0 }
     }
 
     /// Add a SEGDEF to the segment, validating the combine type and total size, and returning
@@ -361,7 +362,7 @@ mod test {
         );
 
         let acbp = 0x34;
-        
+
         let segdef = SegDef::new(1, 8, acbp, Align::Byte, Combine::Stack);
 
         assert!(segment.add_segdef(&segdef).is_err());

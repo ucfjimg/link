@@ -86,25 +86,6 @@ fn main() -> Result<(), LinkerError> {
 
     pass1(&mut linkstate, &mut objects, &libs, &args)?;
 
-    /* 
-    println!("OBJECTS");
-    for obj in objects.iter() {
-        println!("*** {}", obj.name);
-        println!("EXTERNS");
-        for ext in obj.extdefs.iter() {
-            println!("  {}", ext);
-        }
-
-        println!("SEGDEFS");
-        for segdef in obj.segdefs.iter() {
-            println!("  #{:02} {:05X}H {:05X}H {:?} {:?}", segdef.segidx, segdef.base, segdef.length, segdef.align, segdef.combine);
-        }
-        println!();
-    }
-
-    println!("SEGMENTS");
-    */
-
     println!("\n Start  Stop   Length Name               Class\n");
     for segidx in linkstate.segment_order.iter().map(|x| *x) {
         let seg = &linkstate.segments[segidx];
@@ -121,20 +102,21 @@ fn main() -> Result<(), LinkerError> {
 
     for segidx in linkstate.segment_order.iter() {
         let seg = &linkstate.segments[*segidx];
+        let grp = if seg.group != 0 { linkstate.lnames.get(linkstate.groups[seg.group].name)  } else { "(none)" };
 
-        let grp = match linkstate.groups.iter().find(|grp| (*grp).iter().find(|x| x == segidx).is_some()) {
-            Some(grp) => linkstate.lnames.get(grp.name),
-            None => "(none)",
-        };
-
-        let frame = seg.base >> 4;
-        let offset = seg.base & 0x000f;
-
+        let base = if seg.group == 0 { seg.base } else { linkstate.groups[seg.group].base };
+        
         for obj in objects.iter() {
             for segdef in obj.segdefs.iter() {
                 if segdef.segidx == *segidx {
+                    let linear = seg.base + segdef.base;
+
+                    let frame = base >> 4;
+                    let offset = (base & 0x000f) + (linear - base);
+
+
                     println!(" {:04X}:{:04X} {:04X} C={:6} S={:14} G={:7} M={:10} ACBP={:02X}", 
-                        frame, segdef.base + offset, 
+                        frame, offset, 
                         segdef.length,   
                         linkstate.lnames.get(seg.name.classidx),
                         linkstate.lnames.get(seg.name.nameidx),
@@ -147,47 +129,64 @@ fn main() -> Result<(), LinkerError> {
         }
     }
 
+    struct SortSym {
+        name: String,
+        frame: usize,
+        offset: usize,
+        linear: usize
+    };
+
     println!("\n  Address         Publics by Name\n");
 
     let mut symbols = linkstate.symbols.symbols.keys().map(|name| name.to_owned()).collect::<Vec<String>>();
     symbols.sort();
 
+    let mut byvalue = Vec::new();
+
     for name in symbols.iter() {
         let sym = linkstate.symbols.symbols.get(name).unwrap();
 
         let (frame,offset) = match &sym {
-            &Symbol::Public(p) => { (0,0) },
-            &Symbol::Common(c) => { (0,0) },
+            &Symbol::Public(p) => {
+                if p.segment != 0 {
+                    let linear = linkstate.segments[p.segment].base + p.offset as usize;
+
+                    let base = if p.group != 0 {
+                        linkstate.groups[p.group].base
+                    } else {
+                        linkstate.segments[p.segment].base
+                    };
+
+                    let frame = base >> 4;
+                    let offset = (base & 0x000f) + (linear - base);
+
+                    (frame, offset)
+                } else {
+                    (p.frame as usize, p.offset as usize)
+                }
+            },
+            &Symbol::Common(_c) => { (0,0) },
             _ => continue,
         };
+
+        byvalue.push(SortSym{
+            name: name.to_owned(),
+            frame,
+            offset,
+            linear: (frame << 4) + offset
+        });
 
         println!(" {:04X}:{:04X}       {}", frame, offset, name);
     }
 
+    byvalue.sort_by_key(|sym| sym.linear);
 
+    println!("\n  Address         Publics by Value\n");
 
-
-    /* 
-    println!("SYMBOLS");
-
-    let mut symnames = linkstate.symbols.symbols.keys().map(|name| &name[..]).collect::<Vec<&str>>();
-    symnames.sort();
-
-
-    for name in symnames {
-        let sym = linkstate.symbols.symbols.get(name).unwrap();
-        print!("  {:30} ", name);
-
-        match sym {
-            Symbol::Undefined => print!("UND"),
-            Symbol::Public(p) => print!("PUB GROUP {:2} SEG {:2} FRAME {:04X}H {:05X}H", p.group, p.segment, p.frame, p.offset),
-            Symbol::Common(_) => print!("COM"),
-            _ => {},
-        }
-
-        println!();
+    for sym in byvalue.iter() {
+        println!(" {:04X}:{:04X}       {}", sym.frame, sym.offset, sym.name);
     }
-    */
+
 
     Ok(())
 }

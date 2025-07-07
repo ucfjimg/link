@@ -227,6 +227,18 @@ fn pass1_build_memory_map(state: &mut LinkState) -> Result<(), LinkerError> {
 
     state.segment_order = order;
 
+    //
+    // Compute linear base addresses of groups.
+    //
+    for i in 1..state.groups.len() {
+        let group = &mut state.groups[i];
+        let base = group.iter().min_by(|x, y| state.segments[*x].base.cmp(&state.segments[*y].base)).unwrap_or(0);
+
+        if base != 0 {
+            group.base = state.segments[base].base;
+        }    
+    }
+
     Ok(())
 }
 
@@ -554,6 +566,13 @@ fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
         // Get the linker-level segment index.
         //
         let segidx = obj.segdefs[segidx].segidx;
+        let segment = &mut state.segments[segidx];
+
+        if segment.group != 0 {
+            println!("Warning: segment {} is in more than one group.", state.lnames.get(segment.name.nameidx));
+        } else {
+            segment.group = index;
+        }
 
         group.add(segidx);
     }
