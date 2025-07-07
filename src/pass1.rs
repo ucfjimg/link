@@ -568,7 +568,7 @@ fn pass1_grpdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
         let segidx = obj.segdefs[segidx].segidx;
         let segment = &mut state.segments[segidx];
 
-        if segment.group != 0 {
+        if segment.group != 0 && segment.group != index {
             println!("Warning: segment {} is in more than one group.", state.lnames.get(segment.name.nameidx));
         } else {
             segment.group = index;

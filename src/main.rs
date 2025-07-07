@@ -121,7 +121,7 @@ fn main() -> Result<(), LinkerError> {
                         linkstate.lnames.get(seg.name.classidx),
                         linkstate.lnames.get(seg.name.nameidx),
                         grp,
-                        obj.name,
+                        obj.name.to_uppercase(),
                         segdef.acbp
                     );
                 }
@@ -185,7 +185,7 @@ fn main() -> Result<(), LinkerError> {
         });
 
         let used = if used { "    " } else { "idle" };
-        println!(" {:04X}:{:04X} {used}  {}", frame, offset, name);
+        println!(" {:04X}:{:04X} {used}  {}", frame, offset, name.to_uppercase());
     }
 
     byvalue.sort_by_key(|sym| sym.linear);
@@ -194,7 +194,7 @@ fn main() -> Result<(), LinkerError> {
 
     for sym in byvalue.iter() {
         let used = if sym.used { "    " } else { "idle" };
-        println!(" {:04X}:{:04X} {used}  {}", sym.frame, sym.offset, sym.name);
+        println!(" {:04X}:{:04X} {used}  {}", sym.frame, sym.offset, sym.name.to_uppercase());
     }
 
 
