@@ -21,7 +21,7 @@ use library::Library;
 use linker_error::LinkerError;
 use linkstate::LinkState;
 use pass1::pass1;
-use crate::symbols::Symbol;
+use symbols::Symbol;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -86,6 +86,7 @@ fn main() -> Result<(), LinkerError> {
 
     pass1(&mut linkstate, &mut objects, &libs, &args)?;
 
+    /* 
     println!("OBJECTS");
     for obj in objects.iter() {
         println!("*** {}", obj.name);
@@ -102,12 +103,71 @@ fn main() -> Result<(), LinkerError> {
     }
 
     println!("SEGMENTS");
-    for (i,seg)  in linkstate.segments.iter().enumerate().map(|(i, seg) | (i+1, seg)) {
-        let segname = linkstate.segname(&seg.name);
-        println!("#{:02} {:30} {:05X}H {:?} {:?}", i, segname, seg.length, seg.align, seg.combine); 
-    }
-    println!();
+    */
 
+    println!("\n Start  Stop   Length Name               Class\n");
+    for segidx in linkstate.segment_order.iter().map(|x| *x) {
+        let seg = &linkstate.segments[segidx];
+
+        println!(" {:05X}H {:05X}H {:05X}H {:18} {}", 
+            seg.base,
+            if seg.length == 0 { seg.base } else { seg.base + seg.length - 1},
+            seg.length, 
+            linkstate.lnames.get(seg.name.nameidx), 
+            linkstate.lnames.get(seg.name.classidx));
+    }
+    
+    println!("\n\nDetailed map of segments\n");
+
+    for segidx in linkstate.segment_order.iter() {
+        let seg = &linkstate.segments[*segidx];
+
+        let grp = match linkstate.groups.iter().find(|grp| (*grp).iter().find(|x| x == segidx).is_some()) {
+            Some(grp) => linkstate.lnames.get(grp.name),
+            None => "(none)",
+        };
+
+        let frame = seg.base >> 4;
+        let offset = seg.base & 0x000f;
+
+        for obj in objects.iter() {
+            for segdef in obj.segdefs.iter() {
+                if segdef.segidx == *segidx {
+                    println!(" {:04X}:{:04X} {:04X} C={:6} S={:14} G={:7} M={:10} ACBP={:02X}", 
+                        frame, segdef.base + offset, 
+                        segdef.length,   
+                        linkstate.lnames.get(seg.name.classidx),
+                        linkstate.lnames.get(seg.name.nameidx),
+                        grp,
+                        obj.name,
+                        segdef.acbp
+                    );
+                }
+            }
+        }
+    }
+
+    println!("\n  Address         Publics by Name\n");
+
+    let mut symbols = linkstate.symbols.symbols.keys().map(|name| name.to_owned()).collect::<Vec<String>>();
+    symbols.sort();
+
+    for name in symbols.iter() {
+        let sym = linkstate.symbols.symbols.get(name).unwrap();
+
+        let (frame,offset) = match &sym {
+            &Symbol::Public(p) => { (0,0) },
+            &Symbol::Common(c) => { (0,0) },
+            _ => continue,
+        };
+
+        println!(" {:04X}:{:04X}       {}", frame, offset, name);
+    }
+
+
+
+
+    /* 
     println!("SYMBOLS");
 
     let mut symnames = linkstate.symbols.symbols.keys().map(|name| &name[..]).collect::<Vec<&str>>();
@@ -127,6 +187,7 @@ fn main() -> Result<(), LinkerError> {
 
         println!();
     }
+    */
 
     Ok(())
 }

@@ -149,6 +149,32 @@ impl<'a> Record<'a> {
         }
     }
 
+    /// Extract the next COMDEF-format length field from the record.
+    /// 
+    pub fn comdef_length(&mut self) -> Result<usize, LinkerError> {
+        let b0 = self.byte()?;
+
+        if b0 <= 0x80 {
+            Ok(b0 as usize)
+        } else {
+            match b0 {
+                0x81 => {
+                    let data = self.get(2)?;
+                    Ok(u16::from_le_bytes([data[0], data[1]]) as usize)
+                },
+                0x84 => {
+                    let data = self.get(3)?;
+                    Ok(u32::from_le_bytes([data[0], data[1], data[2], 0]) as usize)
+                },
+                0x88 => {
+                    let data = self.get(4)?;
+                    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize)
+                },
+                _ => Err(LinkerError::new(&format!("invalid comdef length lead byte {:02X}H", b0)))
+            }
+        }
+    }
+
     /// Extract a counted string, which has one byte of length and then
     /// that any bytes of ASCII text.
     ///
@@ -351,6 +377,97 @@ mod test
         let rec = [0x88, 0x02, 0x00, 0xc0, 0x00];
         let mut rec = Record::new(&rec)?;
         assert!(rec.index().is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_one_byte() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x02, 0x00, 0x42, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert_eq!(rec.comdef_length()?, 0x42);        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_one_byte_truncated() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x01, 0x00, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert!(rec.comdef_length().is_err());        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_two_bytes() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x04, 0x00, 0x81, 0x42, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert_eq!(rec.comdef_length()?, 0x1242);        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_two_bytes_truncated() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x03, 0x00, 0x81, 0x42, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert!(rec.comdef_length().is_err());        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_three_bytes() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x05, 0x00, 0x84, 0xff, 0x42, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert_eq!(rec.comdef_length()?, 0x1242ff);        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_three_bytes_truncated() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x03, 0x00, 0x81, 0x42, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert!(rec.comdef_length().is_err());        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_four_bytes() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x06, 0x00, 0x88, 0xee, 0xff, 0x42, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert_eq!(rec.comdef_length()?, 0x1242ffee);        
+
+        Ok(())
+    }
+
+    #[test]
+    fn comdef_four_bytes_truncated() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x05, 0x00, 0x88, 0xee, 0xff, 0x42, 0x12];
+        let mut rec = Record::new(&rec)?;
+
+        assert!(rec.comdef_length().is_err());        
+
+        Ok(())
+    }
+
+
+    #[test]
+    fn comdef_invalid_lead_byte() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x06, 0x00, 0x89, 0xee, 0xff, 0x42, 0x12, 0x00];
+        let mut rec = Record::new(&rec)?;
+
+        assert!(rec.comdef_length().is_err());        
 
         Ok(())
     }

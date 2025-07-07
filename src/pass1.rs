@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::Args;
 use crate::group::Group;
 use crate::library::Library;
@@ -8,10 +10,26 @@ use crate::record::{Record, RecordType};
 use crate::segment::{Segment, SegDef, SegName, Align, Combine};
 use crate::symbols::Symbol;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialOrd, PartialEq, Eq, Clone, Copy)]
 struct LibraryModule {
     lib: usize,
     modpage: usize,
+}
+
+impl Ord for LibraryModule {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.lib < other.lib {
+            std::cmp::Ordering::Less
+        } else if self.lib > other.lib {
+            std::cmp::Ordering::Greater
+        } else if self.modpage < other.modpage {
+            std::cmp::Ordering::Less
+        } else if self.modpage > other.modpage {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
 }
 
 struct LibraryModules {
@@ -54,65 +72,254 @@ pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, libs: &[Library],
     }
 
     pass1_add_library_modules(state, libs, objects)?;
+    pass1_build_memory_map(state)?;
 
     Ok(())
 }
 
+/// Given that the initial set of object modules from the command line have been processed,
+/// repeatedly search given libraries for unresolved externals until all externals have
+/// been resolved, or some cannot be resolved. Add the object modules from the libraries to
+/// the `objects` list.
+///
 fn pass1_add_library_modules(state: &mut LinkState, libs: &[Library], objects: &mut Vec<Object>) -> Result<(), LinkerError> {
     let mut mods = LibraryModules::new();
 
+
+    let mut undstart = 0;
+    let mut undefined = 0;
+
+    let mut und = state.symbols.undefined_symbols().into_iter().map(|s| s.to_owned()).collect::<Vec<String>>();
+
+
     loop {
         //
-        // Walk the library list looking for undefined symbols.
+        // First, find all the known undefineds. 
         //
-        let undefined = state.symbols.undefined_symbols();
+        for ext in und {
+            //
+            // If it's in the symbol table, it's resolved by one of the already loaded 
+            // modules.
+            //
+            if let Some(sym) = state.symbols.symbols.get(&ext) {
+                if sym != &Symbol::Undefined {
+                    continue;
+                }
+            }
 
-        if undefined.is_empty() {
+            //
+            // Else search the libraries.
+            //
+            let mut found = false;
+
+            for (libidx, lib) in libs.iter().enumerate() {
+                if let Some(modpage) = lib.find_symbol_in_dictionary(&ext)? {
+                    mods.add(LibraryModule { lib: libidx, modpage });
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                eprintln!("undefined symbol {ext}.");
+                undefined += 1;
+            }
+        }
+
+        //
+        // If there were any symbols not found, return error now.
+        //
+        if undefined != 0 {
+            return Err(LinkerError::new(
+                &format!("{} undefined symbols.", undefined)
+            ));
+        }
+
+        //
+        // If we didn't add any new modules, we're done.
+        //
+        if undstart == mods.mods.len() {
             break;
         }
 
-        let mut still_undefined = Vec::new();
-
-        let old_mods = mods.mods.len();
-
-        for sym in undefined {
-            for (libidx, lib) in libs.iter().enumerate() {
-                let modpage = lib.find_symbol_in_dictionary(sym)?;
-                if let Some(modpage) = modpage {
-                    mods.add(LibraryModule { lib: libidx, modpage });
-                } else {
-                    still_undefined.push(sym);
-                }             
-            }
-        }
-
         //
-        // If there are still undefined symbols after we have search the libraries, then 
-        // those symbols are never going to be defined and we can give up.
+        // We added at least one more module, collect externs again.
         //
-        if !still_undefined.is_empty() {
-            for sym in still_undefined.iter() {
-                println!("undefined external: {}", sym);
+        let mut new_externs = HashSet::new();
+        while undstart < mods.mods.len() {
+            let moddef = &mods.mods[undstart];            
+            let obj = libs[moddef.lib].extract_module(moddef.modpage)?;
+
+            let externs = pass1_obj_externs(&obj.data.unwrap())?;
+            for ext in externs {
+                new_externs.insert(ext);
             }
-            return Err(LinkerError::new(&format!("{} undefined externals.", still_undefined.len())));
+
+            undstart += 1;
         }
-
-        for module in mods.mods.iter().skip(old_mods) {
-            let lib = &libs[module.lib];
-            println!("add {} modpage {}", lib.name, module.modpage);
-
-            let objname = format!("{}@{:x}", lib.name, module.modpage);
-
-            let mut obj = libs[module.lib].extract_module(module.modpage)?;
-            let data = obj.data.take().unwrap();
-            pass1_object(state, &data, &mut obj, &objname)?;
-            obj.data = Some(data);
-            objects.push(obj);
+    
+        if new_externs.is_empty() {
+            break;
         }
+        
+        und = new_externs.into_iter().map(|s| s.to_owned()).collect::<Vec<String>>();
+    }
+
+    mods.mods.sort();
+
+    for moddef in &mods.mods {
+        let mut obj = libs[moddef.lib].extract_module(moddef.modpage)?;
+        let data = obj.data.take().unwrap();
+        let name = &format!("{}@{:X}", libs[moddef.lib].name, moddef.modpage);
+        pass1_object(state, &data, &mut obj, name)?;
+        obj.data = Some(data);
+        objects.push(obj);
     }
 
     Ok(())
 }
+
+/// Once all object modules have been added, build the runtime memory map by placing all segments 
+/// in proper order and at proper alignment.
+/// 
+fn pass1_build_memory_map(state: &mut LinkState) -> Result<(), LinkerError> {
+    let mut order = Vec::new();
+    let mut placed: Vec<bool> = (0..=state.segments.len()).map(|_| false).collect();
+
+    //
+    // Compute the new order.
+    //
+    for (index, seg) in state.segments.iter().enumerate().map(|(i, seg) | (i+1, seg)) {
+        if !placed[index] {
+            let class = seg.name.classidx;
+
+            if class == 0 {
+                //
+                // Classless segments just get pushed in their order of appearance
+                //
+                order.push(index);
+                placed[index] = true;
+            } else {
+                //
+                // Segments with a class get added, with all of the other segments of the class
+                // following.
+                //
+                for index  in state.segments.iter().enumerate().filter(|(_, seg)| seg.name.classidx == class).map(|(i, _) | i+1) {
+                    order.push(index);
+                    placed[index] = true;            
+                }
+            }
+        }
+    }
+
+    //
+    // Assign linear base addresses.
+    //
+    let mut next_base = 0;
+
+    for index in order.iter() {
+        let seg = &mut state.segments[*index];
+
+        next_base = seg.align.align_by(next_base);
+        seg.base = next_base;
+        next_base += seg.length;
+   }
+
+    state.segment_order = order;
+
+    Ok(())
+}
+
+/// Borland tlink orders object modules in order of appearance in their containing libraries.
+/// To emulate this, we need to be able to pull out the non-local externs from each module,
+/// so we can build the dependency graph up front before we actually place any object modules
+/// in the load order.
+///  
+fn pass1_obj_externs(data: &[u8]) -> Result<Vec<String>, LinkerError> {
+    let mut start = 0;
+    let mut externs = Vec::new();
+
+    while start < data.len() {
+        let mut rec = Record::new(&data[start..])?;
+        let reclen = rec.total_length();
+
+        //
+        // The extern collection contains names from EXTDEF, COMDEF, LEXTDEF, and LCOMDEF; we 
+        // only care about the first two because the latter two are expected to be resolved
+        // in the same object module.
+        //
+        match rec.rectype {
+            RecordType::EXTDEF => externs.extend_from_slice(&pass1_extdef_names(&mut rec)?[..]),
+            RecordType::COMDEF => externs.extend_from_slice(&pass1_comdef_names(&mut rec)?[..]),
+            _ =>{},
+        }
+
+        start += reclen;
+    }
+
+    Ok(externs)
+}
+
+/// Parse an EXTDEF record, returning just the names without updating any data structures. 
+/// 
+fn pass1_extdef_names(rec: &mut Record) -> Result<Vec<String>, LinkerError> {
+    let mut names = Vec::new();
+
+    while !rec.end() {
+        let name = rec.counted_string()?;
+
+        //
+        // there is an unused type index after every name.
+        //
+        rec.index()?;
+
+        names.push(name);
+    }
+
+    Ok(names)
+}
+
+/// Parse a COMDEF record, returning just the names without updating any data structures. 
+/// 
+fn pass1_comdef_names(rec: &mut Record) -> Result<Vec<String>, LinkerError> {
+    let mut names = Vec::new();
+
+    const FAR_DATA: u8 = 0x61;
+    const NEAR_DATA: u8 = 0x62;
+
+    while !rec.end() {
+        let name = rec.counted_string()?;
+
+        //
+        // unused type index
+        //
+        rec.index()?;
+
+        //
+        // data type byte
+        //
+        let datatype = rec.byte()?;
+
+        //
+        // Consume encoded lengths as needed
+        //
+        match datatype {
+            NEAR_DATA => {
+                rec.comdef_length()?;
+            },
+            FAR_DATA => {
+                rec.comdef_length()?;
+                rec.comdef_length()?;
+            },
+            _ => {},
+        }
+
+        names.push(name);
+    }
+
+    Ok(names)
+}
+
 
 /// Handle a THEADR record, which names the object file.
 /// 
@@ -155,7 +362,7 @@ fn pass1_extdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
 fn pass1_pubdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Result<(), LinkerError> {
     let group = rec.index()?;
     let segment = rec.index()?;
-    let frame = if segment == 0 { rec.word()? } else { 0 };
+    let baseframe = if segment == 0 { rec.word()? } else { 0 };
 
     if !obj.grpdefs.is_valid_index(group) {
         println!("grpdefs {:?}", obj.grpdefs);
@@ -167,27 +374,44 @@ fn pass1_pubdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
 
     let group = obj.grpdefs.get(group);
 
-    let segment = if segment == 0 {
-        0
+    let (segbase, seglen, segment) = if segment == 0 {
+        (0, 0, 0)
     } else {
         if segment != 0 && !obj.segdefs.is_valid_index(segment) {
             return Err(LinkerError::new(
                 &format!("invalid segment index {} in PUBDEF", segment)
             ));
         }
-        obj.segdefs[segment].segidx
+        let segdef = &obj.segdefs[segment];
+        (segdef.base, segdef.length, segdef.segidx)
     };
 
     while !rec.end() {
         let name = rec.counted_string()?;
         let offset = rec.word()?;
 
+        let segoffs = if segment == 0 {
+            offset
+        } else {
+            if offset as usize >= seglen && !(offset == 0 && seglen == 0)  {
+                return Err(LinkerError::new(&format!("public {} offset {:04X}H is outside of SEGDEF.", name, offset)));
+            }
+
+            let segoffs = segbase + offset as usize;
+
+            if segoffs > 0xffff {
+                return Err(LinkerError::new(&format!("public {} offset {:05X}H does not fit in 16 bits.", name, segoffs)));
+            }
+
+            segoffs as u16
+        };
+
         //
         // There is an unused type index after each symbol.
         //
         rec.index()?;
 
-        let symbol = Symbol::public(group, segment, frame, offset);
+        let symbol = Symbol::public(group, segment, baseframe, segoffs);
         state.symbols.update(&name, symbol)?;
     }
 
@@ -271,7 +495,7 @@ fn pass1_segdef(obj: &mut Object, state: &mut LinkState, rec: &mut Record) -> Re
         state.segments.add(segment)
     };
 
-    let mut segdef = SegDef::new(index, length, align, combine);
+    let mut segdef = SegDef::new(index, length, acbp, align, combine);
 
     segdef.base = state.segments[index].add_segdef(&segdef)?;
 
@@ -544,13 +768,14 @@ mod test {
         let seg = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
         let index = state.segments.add(seg);
 
-        let segdef = SegDef::new(index, 100, Align::Byte, Combine::Public); 
+        let acbp = 0x28;
+        let segdef = SegDef::new(index, 100, acbp, Align::Byte, Combine::Public); 
         obj.segdefs.push(segdef);
 
         let seg = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
         let index = state.segments.add(seg);
 
-        let segdef = SegDef::new(index, 200, Align::Byte, Combine::Public); 
+        let segdef = SegDef::new(index, 200, acbp, Align::Byte, Combine::Public); 
         obj.segdefs.push(segdef);
 
         assert_eq!(obj.grpdefs.len(), 0);
@@ -590,13 +815,14 @@ mod test {
         let seg = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
         let index = state.segments.add(seg);
 
-        let segdef = SegDef::new(index, 100, Align::Byte, Combine::Public); 
+        let acbp = 0x28;
+        let segdef = SegDef::new(index, 100, acbp, Align::Byte, Combine::Public); 
         obj.segdefs.push(segdef);
 
         let seg = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
         let index = state.segments.add(seg);
 
-        let segdef = SegDef::new(index, 200, Align::Byte, Combine::Public); 
+        let segdef = SegDef::new(index, 200, acbp, Align::Byte, Combine::Public); 
         obj.segdefs.push(segdef);
 
         let mut group = Group::new(5);
@@ -675,16 +901,17 @@ mod test {
         let group = Group::new(4);
         obj.grpdefs.add(state.groups.add(group));
 
+        let acbp = 0x28;
         let segment = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
         state.segments.add(segment);
         
         let segment = Segment::new(SegName::new(1, 2, 0), 0, Align::Byte, Combine::Public);
         let segidx = state.segments.add(segment);
-        obj.segdefs.add(SegDef::new(segidx, 100, Align::Byte, Combine::Public));
+        obj.segdefs.add(SegDef::new(segidx, 100, acbp, Align::Byte, Combine::Public));
 
         let segment = Segment::new(SegName::new(3, 3, 0), 0, Align::Byte, Combine::Public);
         let segidx = state.segments.add(segment);
-        obj.segdefs.add(SegDef::new(segidx, 100, Align::Byte, Combine::Public));
+        obj.segdefs.add(SegDef::new(segidx, 0x6000, acbp, Align::Byte, Combine::Public));
 
         pass1_pubdef(&mut obj, &mut state, &mut rec)?;
 

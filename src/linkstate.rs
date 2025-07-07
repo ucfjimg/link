@@ -16,6 +16,7 @@ pub struct LinkState {
     pub segments: OmfVec<Segment>,
     pub groups: OmfVec<Group>,
     pub symbols: SymbolTable,
+    pub segment_order: Vec<usize>,
 }
 
 impl LinkState {
@@ -25,6 +26,7 @@ impl LinkState {
             segments: OmfVec::new(),
             groups: OmfVec::new(),
             symbols: SymbolTable::new(),
+            segment_order: Vec::new(),
         }
     }
 

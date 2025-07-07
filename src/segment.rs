@@ -86,16 +86,18 @@ pub struct SegDef {
     pub segidx: usize,
     pub base: usize,
     pub length: usize,
+    pub acbp: u8,
     pub align: Align,
     pub combine: Combine,
 }
 
 impl SegDef {
-    pub fn new(segidx: usize, length: usize, align: Align, combine: Combine) -> SegDef {
+    pub fn new(segidx: usize, length: usize, acbp: u8, align: Align, combine: Combine) -> SegDef {
         SegDef {
             segidx,
             base: 0,
             length,
+            acbp,
             align,
             combine
         }
@@ -105,7 +107,7 @@ impl SegDef {
 /// The name of a segment is the triple of it's name, class, and overlay lnames.
 /// These are indices into the global lnames table.
 /// 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegName {
     pub nameidx: usize,
     pub classidx: usize,
@@ -122,11 +124,13 @@ impl SegName {
 /// name. It represents a contiguous region of memory in the final executable's
 /// address space.
 ///
+#[derive(Clone)] 
 pub struct Segment {
     pub name: SegName,
     pub length: usize,
     pub align: Align,
     pub combine: Combine,
+    pub base: usize,
 }
 
 /// The maximum size of a 32-bit segment.
@@ -135,7 +139,7 @@ const MAX_SEGMENT_SIZE: usize = 0x10000;
 
 impl Segment {
     pub fn new(name: SegName, length: usize, align: Align, combine: Combine) -> Segment {
-        Segment{ name, length, align, combine }
+        Segment{ name, length, align, combine, base: 0 }
     }
 
     /// Add a SEGDEF to the segment, validating the combine type and total size, and returning
@@ -235,7 +239,8 @@ mod test {
             Combine::Public
         );
 
-        let segdef = SegDef::new(1, 0x1f4, Align::Para, Combine::Public);
+        let acbp = 0x68;
+        let segdef = SegDef::new(1, 0x1f4, acbp, Align::Para, Combine::Public);
 
         let base = segment.add_segdef(&segdef)?;
 
@@ -254,7 +259,8 @@ mod test {
             Combine::Stack
         );
 
-        let segdef = SegDef::new(1, 0x1f4, Align::Para, Combine::Stack);
+        let acbp = 0x74;
+        let segdef = SegDef::new(1, 0x1f4, acbp, Align::Para, Combine::Stack);
 
         let base = segment.add_segdef(&segdef)?;
 
@@ -273,7 +279,8 @@ mod test {
             Combine::Common
         );
 
-        let segdef = SegDef::new(1, 0x1f4, Align::Para, Combine::Common);
+        let acbp = 0x78;
+        let segdef = SegDef::new(1, 0x1f4, acbp, Align::Para, Combine::Common);
 
         let base = segment.add_segdef(&segdef)?;
 
@@ -287,7 +294,7 @@ mod test {
             Combine::Common
         );
 
-        let segdef = SegDef::new(1, 0x1f4, Align::Para, Combine::Common);
+        let segdef = SegDef::new(1, 0x1f4, acbp, Align::Para, Combine::Common);
 
         let base = segment.add_segdef(&segdef)?;
 
@@ -309,7 +316,8 @@ mod test {
         //
         // Exactly 64k is fine.
         //
-        let segdef = SegDef::new(1, 8, Align::Byte, Combine::Public);
+        let acbp = 0x28;
+        let segdef = SegDef::new(1, 8, acbp, Align::Byte, Combine::Public);
 
         let base = segment.add_segdef(&segdef)?;
 
@@ -319,7 +327,7 @@ mod test {
         //
         // 64k + 1 byte is not.
         //
-        let segdef = SegDef::new(1, 1, Align::Byte, Combine::Public);
+        let segdef = SegDef::new(1, 1, acbp, Align::Byte, Combine::Public);
 
         assert!(segment.add_segdef(&segdef).is_err());
 
@@ -335,7 +343,8 @@ mod test {
             Combine::Private
         );
 
-        let segdef = SegDef::new(1, 8, Align::Byte, Combine::Private);
+        let acbp = 0x20;
+        let segdef = SegDef::new(1, 8, acbp, Align::Byte, Combine::Private);
 
         assert!(segment.add_segdef(&segdef).is_err());
 
@@ -351,7 +360,9 @@ mod test {
             Combine::Public
         );
 
-        let segdef = SegDef::new(1, 8, Align::Byte, Combine::Stack);
+        let acbp = 0x34;
+        
+        let segdef = SegDef::new(1, 8, acbp, Align::Byte, Combine::Stack);
 
         assert!(segment.add_segdef(&segdef).is_err());
 
