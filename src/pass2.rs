@@ -391,15 +391,12 @@ fn fixup_extdef_base(state: &LinkState, obj: &Object, extidx: usize) -> Result<u
             None => return Err(LinkerError::new(&format!("{}: symbol does not exist in pass 2.", symname))),
         };
 
-        let frame = if segidx == 0 {
-            frame as u16
-        } else if grpidx != 0 {
-            fixup_grpdef_frame(state, obj, grpidx)?
+        Ok(if segidx == 0 {
+            offset as usize 
         } else {
-            fixup_segdef_frame(state, obj, segidx)?
-        } as usize;
-
-        Ok((frame << 4) + offset as usize)
+            let segment = &state.segments[segidx];
+            segment.base + offset as usize
+        })
     }
 }
 
@@ -530,12 +527,15 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
     // Compute target.
     //
     let target = match target_type {
-        TargetType::SEGDEF => fixup_segdef_base(state, obj, target_index)?,
+        TargetType::SEGDEF => {
+            let base = fixup_segdef_base(state, obj, target_index)?;
+            let segdef = &obj.segdefs[target_index];
+            base + segdef.base
+        },
         TargetType::GRPDEF => fixup_grpdef_base(state, obj, target_index)?,
         TargetType::EXTDEF => fixup_extdef_base(state, obj, target_index)?,
         _ => unreachable!(),
     } + target_disp as usize;
-
 
     //
     // Compute the fixup
