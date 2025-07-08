@@ -1,5 +1,5 @@
 use crate::Args;
-use crate::dosexe::DosExe;
+use crate::dosexe::{DosExe, Relocation};
 use crate::linker_error::LinkerError;
 use crate::linkstate::LinkState;
 use crate::object::Object;
@@ -125,8 +125,8 @@ impl Locat {
 }
 
 struct LastDataRegion {
+    frame: u16,
     base: usize,
-    length: usize,
 }
 
 /// Execute pass 2. 
@@ -143,16 +143,22 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 
     image.resize(memsize, 0u8);
 
+    let mut relocs = Vec::new();
+
     //
     // Execute pass 2 on all object files
     //
     for obj in objects.iter_mut() {
         let data = obj.data.take().unwrap();
-        pass2_object(state, &data, obj, &mut image)?;
+        pass2_object(state, &data, obj, &mut image, &mut relocs)?;
         obj.data = Some(data);
     }
 
-    let exe = DosExe::new(&image);
+    let mut exe = DosExe::new(&image);
+
+    for reloc in relocs {
+        exe.add_relocation(reloc);
+    }
 
     exe.write(args.output.as_ref().unwrap())?;
 
@@ -161,9 +167,9 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 
 /// Handle one pass 2 object file.
 /// 
-fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mut [u8]) -> Result<(), LinkerError> {
+fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mut [u8], relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
     let mut start = 0;
-    let mut lastdata = LastDataRegion{ base: 0, length: 0 };
+    let mut lastdata = LastDataRegion{ frame: 0, base: 0 };
 
     while start < data.len() {
         let mut rec = Record::new(&data[start..])?;
@@ -186,7 +192,7 @@ fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mu
             //
             RecordType::LEDATA => pass2_ledata(&mut rec, state, obj, image, &mut lastdata),
             RecordType::LIDATA => pass2_lidata(&mut rec, state, obj, image, &mut lastdata),
-            RecordType::FIXUPP => pass2_fixupp(&mut rec, state, obj, image, &lastdata),
+            RecordType::FIXUPP => pass2_fixupp(&mut rec, state, obj, image, &lastdata, relocs),
             RecordType::MODEND => break,
 
             _ => Err(LinkerError::new(&format!("unhandled record {:?}", rec.rectype))),
@@ -239,10 +245,11 @@ fn pass2_ledata(rec: &mut Record, state: &LinkState, obj: &Object, image: &mut [
     let data = rec.rest();
 
     let base = base_of_obj_seg_offset(obj, segidx, offset as usize, state, data.len(), "LEDATA")?;
+    let frame = fixup_segdef_frame(state, obj, segidx)?;
 
     image[base..base+data.len()].copy_from_slice(&data);
 
-    *lastdata = LastDataRegion{ base, length: data.len()};
+    *lastdata = LastDataRegion{ frame, base };
  
     Ok(())
 }
@@ -291,10 +298,11 @@ fn pass2_lidata(rec: &mut Record, state: &LinkState, obj: &Object, image: &mut [
     }
 
     let base = base_of_obj_seg_offset(obj, segidx, offset as usize, state, data.len(), "LIDATA")?;
+    let frame = fixup_segdef_frame(state, obj, segidx)?;
 
     image[base..base+data.len()].copy_from_slice(&data);
 
-    *lastdata = LastDataRegion{ base, length: data.len()};
+    *lastdata = LastDataRegion{ frame, base };
 
     Ok(())
 }
@@ -397,7 +405,7 @@ fn fixup_extdef_base(state: &LinkState, obj: &Object, extidx: usize) -> Result<u
 
 /// Process a thread subrecord of a FIXUPP.
 /// 
-fn pass2_fixupp_thread(rec: &mut Record, state: &mut LinkState, obj: &mut Object, b0: u8) -> Result<(), LinkerError> {
+fn pass2_fixupp_thread(rec: &mut Record, obj: &mut Object, b0: u8) -> Result<(), LinkerError> {
     let is_frame_thread = (b0 & 0x40) != 0;
     let thread = (b0 & 0x03) as usize;
 
@@ -434,7 +442,7 @@ fn pass2_fixupp_thread(rec: &mut Record, state: &mut LinkState, obj: &mut Object
 
 /// Process a fixup subrecord of a FIXUPP.
 /// 
-fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, image: &mut[u8], b0: u8, lastdata: &LastDataRegion) -> Result<(), LinkerError> {
+fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, image: &mut[u8], b0: u8, lastdata: &LastDataRegion, relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
     //
     // Fixup location.
     //
@@ -562,6 +570,13 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
                     let next = u16::wrapping_add(curr, fbval);
                     
                     slice.copy_from_slice(&next.to_le_bytes());
+
+                    let reloc = Relocation {
+                        seg: lastdata.frame,
+                        offset: (imageptr - ((lastdata.frame as usize) << 4)) as u16,
+                    };
+
+                    relocs.push(reloc);
                 }
             },
             Locat::FarPointer => {
@@ -579,6 +594,13 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
                     let next = u16::wrapping_add(curr, fbval);
                     
                     slice.copy_from_slice(&next.to_le_bytes());
+
+                    let reloc = Relocation {
+                        seg: lastdata.frame,
+                        offset: (imageptr + 2 - ((lastdata.frame as usize) << 4)) as u16,
+                    };
+
+                    relocs.push(reloc);
                 }
             },
             Locat::LowOrderByte => {
@@ -608,7 +630,7 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
         match loctype {
             Locat::Offset16 => {
                 let disp = (target as i32) - ((imageptr as i32) + 2);
-                
+
                 let slice = &mut image[imageptr..imageptr+2];
                 let curr = u16::from_le_bytes(slice.try_into().unwrap());
                 let next = u16::wrapping_add(curr, disp as u16);
@@ -628,14 +650,14 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
 
 /// Handle a FIXUPP record, which applies relocation changes to the final image.
 /// 
-fn pass2_fixupp(rec: &mut Record, state: &mut LinkState, obj: &mut Object, image: &mut[u8], lastdata: &LastDataRegion) -> Result<(), LinkerError> {
+fn pass2_fixupp(rec: &mut Record, state: &mut LinkState, obj: &mut Object, image: &mut[u8], lastdata: &LastDataRegion, relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
     while !rec.end() {
         let b0 = rec.byte()?;
 
         if (b0 & 0x80) == 0x00 {
-            pass2_fixupp_thread(rec, state, obj, b0)?;
+            pass2_fixupp_thread(rec, obj, b0)?;
         } else {
-            pass2_fixupp_fixup(rec, state, obj, image, b0, lastdata)?;
+            pass2_fixupp_fixup(rec, state, obj, image, b0, lastdata, relocs)?;
         }
     }
 

@@ -5,9 +5,9 @@ use crate::linker_error::LinkerError;
 
 /// A relocation table entry
 ///
-struct Relocation {
-    seg: u16,
-    offset: u16,
+pub struct Relocation {
+    pub seg: u16,
+    pub offset: u16,
 }
 
 /// A segmented 16:16 pointer
@@ -106,7 +106,7 @@ impl<'a> DosExe<'a> {
 
     /// Add an entry to the relocation table.
     ///
-    fn add_relocation(&mut self, reloc: Relocation) {
+    pub fn add_relocation(&mut self, reloc: Relocation) {
         self.relocs.push(reloc);
     }
 
@@ -120,15 +120,21 @@ impl<'a> DosExe<'a> {
         const OFF_MAX_ALLOC: usize = 0x0c;
         const OFF_SS: usize = 0x0e;
         const OFF_SP: usize = 0x10;
-        const OFF_CHECKSUM: usize = 0x12;
+        const _OFF_CHECKSUM: usize = 0x12;
         const OFF_IP: usize = 0x14;
         const OFF_CS: usize = 0x16;
         const OFF_RELOC_OFFSET: usize = 0x18;
         const OFF_OVERLAY: usize = 0x1a;
         const OFF_OVERLAY_DATA: usize = 0x1c;
-        const FIXED_HEADER_SIZE: usize = 0x1e;
+        const _FIXED_HEADER_SIZE: usize = 0x1e;
         const PAGE_SIZE: usize = 512;
         const PARA_SIZE: usize = 16;
+
+        //
+        // NB this is where tlink starts relocations. We start them here as well,
+        // just to make the binary diff with tlink output easier.
+        //
+        const RELOC_START: usize = 0x3e;
 
         if self.relocs.len() > 0xffff {
             return Err(LinkerError::new("Too many relocations (max 65535)"));
@@ -137,7 +143,7 @@ impl<'a> DosExe<'a> {
         //
         // Figure out how many pages for the header
         //
-        let header_size = FIXED_HEADER_SIZE + (self.relocs.len() * 4);
+        let header_size = RELOC_START + (self.relocs.len() * 4);
         let header_pages = (header_size + PAGE_SIZE - 1) / PAGE_SIZE;
         let image_pages = (self.data.len() + PAGE_SIZE - 1) / PAGE_SIZE;
         let total_pages = header_pages + image_pages;
@@ -176,7 +182,7 @@ impl<'a> DosExe<'a> {
         header[OFF_IP..OFF_IP+2].copy_from_slice(&self.entry_point.offset.to_le_bytes());
         header[OFF_CS..OFF_CS+2].copy_from_slice(&self.entry_point.seg.to_le_bytes());
 
-        header[OFF_RELOC_OFFSET..OFF_RELOC_OFFSET+2].copy_from_slice(&(FIXED_HEADER_SIZE as u16).to_le_bytes());
+        header[OFF_RELOC_OFFSET..OFF_RELOC_OFFSET+2].copy_from_slice(&(RELOC_START as u16).to_le_bytes());
 
         header[OFF_OVERLAY..OFF_OVERLAY+2].copy_from_slice(&0u16.to_le_bytes());
         header[OFF_OVERLAY_DATA..OFF_OVERLAY_DATA+2].copy_from_slice(&1u16.to_le_bytes());
@@ -185,7 +191,7 @@ impl<'a> DosExe<'a> {
         // Relocations
         //
         for (i, reloc) in self.relocs.iter().enumerate() {
-            let offset = i * 4 + FIXED_HEADER_SIZE;
+            let offset = i * 4 + RELOC_START;
 
             header[offset..offset+2].copy_from_slice(&reloc.offset.to_le_bytes());
             header[offset+2..offset+4].copy_from_slice(&reloc.seg.to_le_bytes());
