@@ -176,7 +176,7 @@ impl<'a> Record<'a> {
     }
 
     /// Extract a counted string, which has one byte of length and then
-    /// that any bytes of ASCII text.
+    /// that many bytes of ASCII text.
     ///
     pub fn counted_string(&mut self) -> Result<String, LinkerError> {
         let count = self.byte()? as usize;
@@ -189,6 +189,17 @@ impl<'a> Record<'a> {
         }
     }
 
+    /// Extract counted bytes, which have one byte of length and then
+    /// that many bytes of data.
+    ///
+    pub fn counted_bytes(&mut self) -> Result<&[u8], LinkerError> {
+        let count = self.byte()? as usize;
+
+        self.get(count)
+    }
+
+    /// Extract whatever bytes are left in the record.
+    /// 
     pub fn rest(&mut self) -> &[u8] {
         let count = self.data.len() - self.next;
         let slice = &self.data[self.next..];
@@ -310,6 +321,35 @@ mod test
         let rec = [0x88, 0x01, 0x00, 0x00];
         let mut rec = Record::new(&rec)?;
         assert!(rec.counted_string().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn counted_bytes_ok() -> Result<(), LinkerError> {
+        let rec = [0x88, 0x05, 0x00, 0x03, 0x41, 0x42, 0x43, 0x00];
+
+        let mut rec = Record::new(&rec)?;
+
+        assert_eq!(rec.counted_bytes()?, &[0x41, 0x42, 0x43]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn counted_bytes_truncated() -> Result<(), LinkerError> {
+        //
+        // Count is too short
+        //
+        let rec = [0x88, 0x05, 0x00, 0x04, 0x41, 0x42, 0x43, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert!(rec.counted_bytes().is_err());
+
+        //
+        // Not even room for count
+        //
+        let rec = [0x88, 0x01, 0x00, 0x00];
+        let mut rec = Record::new(&rec)?;
+        assert!(rec.counted_bytes().is_err());
         Ok(())
     }
 
