@@ -6,6 +6,8 @@ use crate::object::Object;
 use crate::record::{Record, RecordType};
 use crate::symbols::{Symbol};
 
+use std::cmp::max;
+
 //
 // Pass 2 logic
 //
@@ -127,6 +129,7 @@ impl Locat {
 struct LastDataRegion {
     frame: u16,
     base: usize,
+    length: usize,
 }
 
 /// Execute pass 2. 
@@ -140,6 +143,7 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
     let lastseg = &state.segments[*state.segment_order.last().unwrap()];
     let memsize = lastseg.base + lastseg.length;
     let mut image = Vec::new();
+    let mut highwater = 0;
 
     image.resize(memsize, 0u8);
 
@@ -150,11 +154,20 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
     //
     for obj in objects.iter_mut() {
         let data = obj.data.take().unwrap();
-        pass2_object(state, &data, obj, &mut image, &mut relocs)?;
+        pass2_object(state, &data, obj, &mut image, &mut relocs, &mut highwater)?;
         obj.data = Some(data);
     }
 
-    let mut exe = DosExe::new(&image);
+    //
+    // Trim the image of trailing, uninitialized data, and set the EXE header minalloc
+    // to require that much extra memory.
+    //
+    let mut exe = DosExe::new(&image[..highwater]);
+
+    const PARA_SIZE: usize = 16;
+    let minalloc = (image.len() - highwater + PARA_SIZE - 1) / PARA_SIZE;
+
+    exe.set_min_alloc(minalloc as u16);
 
     for reloc in relocs {
         exe.add_relocation(reloc);
@@ -167,9 +180,9 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 
 /// Handle one pass 2 object file.
 /// 
-fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mut [u8], relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
+fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mut [u8], relocs: &mut Vec<Relocation>, highwater: &mut usize) -> Result<(), LinkerError> {
     let mut start = 0;
-    let mut lastdata = LastDataRegion{ frame: 0, base: 0 };
+    let mut lastdata = LastDataRegion{ frame: 0, base: 0, length: 0 };
 
     while start < data.len() {
         let mut rec = Record::new(&data[start..])?;
@@ -206,6 +219,8 @@ fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mu
             },
             Ok(_) => {},
         };
+
+        *highwater = max(*highwater, lastdata.base + lastdata.length);
 
         start += reclen;
     }
@@ -249,7 +264,7 @@ fn pass2_ledata(rec: &mut Record, state: &LinkState, obj: &Object, image: &mut [
 
     image[base..base+data.len()].copy_from_slice(&data);
 
-    *lastdata = LastDataRegion{ frame, base };
+    *lastdata = LastDataRegion{ frame, base, length: data.len() };
  
     Ok(())
 }
@@ -302,7 +317,7 @@ fn pass2_lidata(rec: &mut Record, state: &LinkState, obj: &Object, image: &mut [
 
     image[base..base+data.len()].copy_from_slice(&data);
 
-    *lastdata = LastDataRegion{ frame, base };
+    *lastdata = LastDataRegion{ frame, base, length: data.len() };
 
     Ok(())
 }
