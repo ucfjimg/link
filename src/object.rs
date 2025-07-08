@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
+use std::thread::Thread;
 
 use crate::index_map::IndexMap;
 use crate::linker_error::LinkerError;
 use crate::omf_vec::OmfVec;
+use crate::pass2::ThreadState;
 use crate::segment::SegDef;
 
 //
@@ -16,6 +18,7 @@ pub struct Object {
     pub segdefs: OmfVec<SegDef>,
     pub grpdefs: IndexMap,
     pub extdefs: OmfVec<String>,
+    pub fixup_threads: ThreadState,
 }
 
 impl Object {
@@ -30,6 +33,7 @@ impl Object {
             segdefs: OmfVec::new(),
             grpdefs: IndexMap::new(),
             extdefs: OmfVec::new(),
+            fixup_threads: ThreadState::new(),
         }
     }
 
@@ -44,6 +48,7 @@ impl Object {
             segdefs: OmfVec::new(),
             grpdefs: IndexMap::new(),
             extdefs: OmfVec::new(),
+            fixup_threads: ThreadState::new(),
         })
     }
 
@@ -58,6 +63,7 @@ impl Object {
             segdefs: OmfVec::new(),
             grpdefs: IndexMap::new(),
             extdefs: OmfVec::new(),
+            fixup_threads: ThreadState::new(),
         }
     }
 }
