@@ -189,6 +189,13 @@ impl<'a> Record<'a> {
         }
     }
 
+    pub fn rest(&mut self) -> &[u8] {
+        let count = self.data.len() - self.next;
+        let slice = &self.data[self.next..];
+        self.next += count;        
+        slice
+    }
+
     /// Check if all data in the record has been parsed.
     ///
     pub fn end(&self) -> bool {

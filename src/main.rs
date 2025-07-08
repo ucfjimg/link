@@ -8,6 +8,7 @@ mod lnames;
 mod omf_vec;
 mod object;
 mod pass1;
+mod pass2;
 mod record;
 mod segment;
 mod symbols;
@@ -25,6 +26,7 @@ use linker_error::LinkerError;
 use linkstate::LinkState;
 use object::Object;
 use pass1::pass1;
+use pass2::pass2;
 use symbols::Symbol;
 
 #[derive(Parser, Debug)]
@@ -214,6 +216,8 @@ fn main() -> Result<(), LinkerError> {
     if let Some(linkmap) = &args.linkmap {
         write_linkmap(linkmap, &linkstate, &objects)?;
     }
+
+    pass2(&mut linkstate, &mut objects, &args)?; 
 
     Ok(())
 }

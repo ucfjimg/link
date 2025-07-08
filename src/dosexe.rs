@@ -147,7 +147,7 @@ impl<'a> DosExe<'a> {
         }
 
         let mut header: Vec<u8> = Vec::new();
-        header.resize(header_size, 0);
+        header.resize(header_pages * PAGE_SIZE, 0);
 
         //
         // Build the header

@@ -10,6 +10,12 @@ use crate::record::{Record, RecordType};
 use crate::segment::{Segment, SegDef, SegName, Align, Combine};
 use crate::symbols::Symbol;
 
+
+//
+// Pass 1 logic
+//
+
+
 #[derive(PartialOrd, PartialEq, Eq, Clone, Copy)]
 struct LibraryModule {
     lib: usize,
@@ -52,12 +58,11 @@ impl LibraryModules {
     }
 }
 
-//
-// Pass 1 logic
-//
 
 /// Execute pass 1. 
 /// - Parse all objects from the command line.
+/// - Resolve unresolved externals from libraries.
+/// - Compute memory map.
 /// 
 pub fn pass1(state: &mut LinkState, objects: &mut Vec<Object>, libs: &[Library], args: &Args) -> Result<(), LinkerError> {
     //
