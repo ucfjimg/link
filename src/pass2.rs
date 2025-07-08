@@ -4,6 +4,7 @@ use crate::linker_error::LinkerError;
 use crate::linkstate::LinkState;
 use crate::object::Object;
 use crate::record::{Record, RecordType};
+use crate::segment::SegName;
 use crate::symbols::{Symbol};
 
 use std::cmp::max;
@@ -171,6 +172,28 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 
     for reloc in relocs {
         exe.add_relocation(reloc);
+    }
+
+    //
+    // Figure out the stack, if any
+    //
+    let nameidx = state.lnames.find_or_add("_STACK");
+    let classidx = state.lnames.find_or_add("STACK");
+    let ovlyidx = state.lnames.find_or_add("");
+
+    let name = SegName{ nameidx, classidx, ovlyidx };
+
+    if let Some(seg) = state.get_segment_named(&name) {
+        let segment = &state.segments[seg];
+        let frame = (segment.base >> 4) as u16;
+        let mut offset = segment.length + (segment.base & 0x000f);
+        if offset > 0xfffe {
+            offset = 0xfffe;
+        }
+
+        exe.set_stack(frame, offset as u16);
+    } else {
+        eprintln!("warning: no stack.");
     }
 
     exe.write(args.output.as_ref().unwrap())?;
