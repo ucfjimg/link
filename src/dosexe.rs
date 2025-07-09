@@ -2,37 +2,13 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use crate::linker_error::LinkerError;
+use crate::linkstate::FarPtr;
 
 /// A relocation table entry
 ///
 pub struct Relocation {
     pub seg: u16,
     pub offset: u16,
-}
-
-/// A segmented 16:16 pointer
-///
-struct FarPtr {
-    seg: u16,
-    offset: u16,
-}
-
-impl FarPtr {
-    /// Create a pointer with a value
-    ///
-    fn new(seg: u16, offset: u16) -> FarPtr {
-        FarPtr { seg, offset }
-    }
-
-    /// Create a far null pointer
-    ///
-    fn null() -> FarPtr {
-        FarPtr::new(0, 0)
-    }
-
-    fn to_linear(&self) -> usize {
-        (self.seg as usize) << 4 + self.offset as usize
-    }
 }
 
 /// A DOS executable.
@@ -61,23 +37,21 @@ impl<'a> DosExe<'a> {
     /// Check if an object of `size` bytes pointed to by `farptr` is totally
     /// inside the executable image.
     ///
-    fn far_ptr_in_range(&self, ptr: FarPtr, size: usize) -> bool {
+    fn far_ptr_in_range(&self, ptr: &FarPtr, size: usize) -> bool {
         ptr.to_linear() + size <= self.data.len()
     }
 
     /// Set the entry point of the executable. `seg` will be added to the executable's
     /// load address.
     ///
-    pub fn set_entry_point(&mut self, seg: u16, offset: u16) -> Result<(), LinkerError> {
-        let entry = FarPtr::new(seg, offset);
-
+    pub fn set_entry_point(&mut self, entry: &FarPtr) -> Result<(), LinkerError> {
         if !self.far_ptr_in_range(entry, 1) {
             Err(LinkerError::new(&format!(
                 "Entry point {:04x}:{:04x} is outside of the executable",
-                seg, offset
+                entry.seg, entry.offset
             )))
         } else {
-            self.entry_point = FarPtr::new(seg, offset);
+            self.entry_point = *entry;
             Ok(())
         }
     }

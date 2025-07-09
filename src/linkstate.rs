@@ -11,12 +11,41 @@ use crate::segment::{Align, Combine};
 // Linker-global data
 //
 
+///
+/// A segmented 16:16 pointer
+///
+#[derive(Clone, Copy)]
+pub struct FarPtr {
+    pub seg: u16,
+    pub offset: u16,
+}
+
+impl FarPtr {
+    /// Create a pointer with a value
+    ///
+    pub fn new(seg: u16, offset: u16) -> FarPtr {
+        FarPtr { seg, offset }
+    }
+
+    /// Create a far null pointer
+    ///
+    pub fn null() -> FarPtr {
+        FarPtr::new(0, 0)
+    }
+
+    pub fn to_linear(&self) -> usize {
+        (self.seg as usize) << 4 + self.offset as usize
+    }
+}
+
+
 pub struct LinkState {
     pub lnames: LNames,
     pub segments: OmfVec<Segment>,
     pub groups: OmfVec<Group>,
     pub symbols: SymbolTable,
     pub segment_order: Vec<usize>,
+    pub entry: Option<FarPtr>,
 }
 
 impl LinkState {
@@ -27,6 +56,7 @@ impl LinkState {
             groups: OmfVec::new(),
             symbols: SymbolTable::new(),
             segment_order: Vec::new(),
+            entry: None,
         }
     }
 

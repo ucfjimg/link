@@ -1,7 +1,7 @@
 use crate::Args;
 use crate::dosexe::{DosExe, Relocation};
 use crate::linker_error::LinkerError;
-use crate::linkstate::LinkState;
+use crate::linkstate::{FarPtr, LinkState};
 use crate::object::Object;
 use crate::record::{Record, RecordType};
 use crate::segment::SegName;
@@ -196,6 +196,12 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
         eprintln!("warning: no stack.");
     }
 
+    if let Some(entry) = &state.entry {
+        exe.set_entry_point(&entry)?;
+    } else {    
+        eprintln!("warning: program has no entry point.");
+    }
+
     exe.write(args.output.as_ref().unwrap())?;
 
     Ok(())
@@ -206,8 +212,9 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
 fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mut [u8], relocs: &mut Vec<Relocation>, highwater: &mut usize) -> Result<(), LinkerError> {
     let mut start = 0;
     let mut lastdata = LastDataRegion{ frame: 0, base: 0, length: 0 };
+    let mut modend = false;
 
-    while start < data.len() {
+    while !modend && start < data.len() {
         let mut rec = Record::new(&data[start..])?;
         let reclen = rec.total_length();
 
@@ -229,7 +236,10 @@ fn pass2_object(state: &mut LinkState, data: &[u8], obj: &mut Object, image: &mu
             RecordType::LEDATA => pass2_ledata(&mut rec, state, obj, image, &mut lastdata),
             RecordType::LIDATA => pass2_lidata(&mut rec, state, obj, image, &mut lastdata),
             RecordType::FIXUPP => pass2_fixupp(&mut rec, state, obj, image, &lastdata, relocs),
-            RecordType::MODEND => break,
+            RecordType::MODEND => { 
+                modend = true; 
+                pass2_modend(&mut rec, state, obj, &lastdata)
+            },
 
             _ => Err(LinkerError::new(&format!("unhandled record {:?}", rec.rectype))),
         };
@@ -420,9 +430,9 @@ fn fixup_extdef_base(state: &LinkState, obj: &Object, extidx: usize) -> Result<u
     } else {
         let symname = &obj.extdefs[extidx];
         
-        let (grpidx, segidx, frame, offset) = match state.symbols.symbols.get(symname) {
+        let (segidx, offset) = match state.symbols.symbols.get(symname) {
             Some(Symbol::Public(public)) => {
-                (public.group, public.segment, public.frame, public.offset)
+                (public.segment, public.offset)
             },
             Some(Symbol::Common(_)) => return Err(LinkerError::new(&format!("{}: COMDEF records are not yet implemented.", symname))),
             Some(Symbol::Undefined) => return Err(LinkerError::new(&format!("{}: symbol undefined in pass 2.", symname))),
@@ -475,26 +485,12 @@ fn pass2_fixupp_thread(rec: &mut Record, obj: &mut Object, b0: u8) -> Result<(),
     Ok(())
 }
 
-/// Process a fixup subrecord of a FIXUPP.
-/// 
-fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, image: &mut[u8], b0: u8, lastdata: &LastDataRegion, relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
-    //
-    // Fixup location.
-    //
-    let locat = ((b0 as u16) << 8) | (rec.byte()? as u16);
-    let is_segment_rel = (locat & 0x4000) != 0;
-    let loctype = Locat::new((locat >> 10) & 0x000f)?;
-
-    let imageptr = lastdata.base + ((locat as usize) & 0x3ff);
-
-    //
-    // Fixup data
-    //
+fn pass2_fixup_data(rec: &mut Record, state: &LinkState, obj: &Object, lastdata: &LastDataRegion)  -> Result<(u16, usize), LinkerError> {
     let fixdat = rec.byte()?;
     let is_frame_thread = (fixdat & 0x80) != 0;
     let is_target_thread = (fixdat & 0x08) != 0;
     let has_target_disp = (fixdat & 0x04) == 0;
-    
+
     //
     // Frame data
     //
@@ -543,7 +539,7 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
     };
 
     let target_disp = if has_target_disp { rec.word()? } else { 0 };
-
+    
     //
     // Compute frame.
     //
@@ -574,6 +570,25 @@ fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, ima
         TargetType::EXTDEF => fixup_extdef_base(state, obj, target_index)?,
         _ => unreachable!(),
     } + target_disp as usize;
+
+    
+    
+    Ok((fbval, target))
+}
+
+/// Process a fixup subrecord of a FIXUPP.
+/// 
+fn pass2_fixupp_fixup(rec: &mut Record, state: &mut LinkState, obj: &Object, image: &mut[u8], b0: u8, lastdata: &LastDataRegion, relocs: &mut Vec<Relocation>) -> Result<(), LinkerError> {
+    //
+    // Fixup location.
+    //
+    let locat = ((b0 as u16) << 8) | (rec.byte()? as u16);
+    let is_segment_rel = (locat & 0x4000) != 0;
+    let loctype = Locat::new((locat >> 10) & 0x000f)?;
+
+    let imageptr = lastdata.base + ((locat as usize) & 0x3ff);
+
+    let (fbval, target) = pass2_fixup_data(rec, state, obj, lastdata)?;
 
     //
     // Compute the fixup
@@ -696,6 +711,37 @@ fn pass2_fixupp(rec: &mut Record, state: &mut LinkState, obj: &mut Object, image
             pass2_fixupp_thread(rec, obj, b0)?;
         } else {
             pass2_fixupp_fixup(rec, state, obj, image, b0, lastdata, relocs)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle a MODEND record, which potentially includes the program's start address
+/// 
+fn pass2_modend(rec: &mut Record, state: &mut LinkState, obj: &Object, lastdata: &LastDataRegion) -> Result<(), LinkerError> {
+    const IS_MAIN: u8 = 0x80;
+    const HAS_START: u8 = 0x40;
+
+    if !rec.end() {
+        let modtype = rec.byte()?;
+        
+        let is_main = (modtype & IS_MAIN) != 0;
+
+        if is_main && (modtype & HAS_START) != 0 {
+            if state.entry.is_some() {
+                return Err(LinkerError::new("warning: program has multiple entry points."));
+            } else {
+                let (fbval, target) = pass2_fixup_data(rec, state, obj, lastdata)?;
+                let frame_base = (fbval as i32) << 4;
+                let foval = (target as i32) - frame_base;
+                
+                if foval < 0 || foval > 0xffff {
+                    return Err(LinkerError::new("fixup overflow in MODEND start address."));
+                }
+
+                state.entry = Some(FarPtr{ seg: fbval, offset: foval as u16 });
+            }
         }
     }
 
