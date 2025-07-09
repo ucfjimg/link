@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::thread::Thread;
 
 use crate::index_map::IndexMap;
 use crate::linker_error::LinkerError;
@@ -25,6 +24,7 @@ impl Object {
     //
     // Empty
     //
+    #[cfg(test)]
     pub fn new() -> Self {
         Object {
             data: None,

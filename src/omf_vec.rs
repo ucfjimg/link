@@ -39,6 +39,7 @@ impl<T> OmfVec<T> {
 
     /// Push a new element
     /// 
+    #[cfg(test)]
     pub fn push(&mut self, value: T) {
         self.data.push(value);
     }

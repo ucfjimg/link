@@ -169,6 +169,7 @@ pub fn pass2(state: &mut LinkState, objects: &mut Vec<Object>, args: &Args) -> R
     let minalloc = (image.len() - highwater + PARA_SIZE - 1) / PARA_SIZE;
 
     exe.set_min_alloc(minalloc as u16);
+    exe.set_max_alloc(0xffff);
 
     for reloc in relocs {
         exe.add_relocation(reloc);
@@ -381,7 +382,7 @@ fn fixup_extdef_frame(state: &LinkState, obj: &Object, extidx: usize) -> Result<
             Some(Symbol::Public(public)) => {
                 (public.group, public.segment, public.frame)
             },
-            Some(Symbol::Common(_)) => return Err(LinkerError::new(&format!("{}: COMDEF records are not yet implemented.", symname))),
+            Some(Symbol::_Common(_)) => return Err(LinkerError::new(&format!("{}: COMDEF records are not yet implemented.", symname))),
             Some(Symbol::Undefined) => return Err(LinkerError::new(&format!("{}: symbol undefined in pass 2.", symname))),
             None => return Err(LinkerError::new(&format!("{}: symbol does not exist in pass 2.", symname))),
         };
@@ -434,7 +435,7 @@ fn fixup_extdef_base(state: &LinkState, obj: &Object, extidx: usize) -> Result<u
             Some(Symbol::Public(public)) => {
                 (public.segment, public.offset)
             },
-            Some(Symbol::Common(_)) => return Err(LinkerError::new(&format!("{}: COMDEF records are not yet implemented.", symname))),
+            Some(Symbol::_Common(_)) => return Err(LinkerError::new(&format!("{}: COMDEF records are not yet implemented.", symname))),
             Some(Symbol::Undefined) => return Err(LinkerError::new(&format!("{}: symbol undefined in pass 2.", symname))),
             None => return Err(LinkerError::new(&format!("{}: symbol does not exist in pass 2.", symname))),
         };

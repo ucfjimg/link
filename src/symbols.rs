@@ -24,7 +24,7 @@ pub struct CommonSymbol {
 pub enum Symbol {
     Undefined,
     Public(PublicSymbol),
-    Common(CommonSymbol),
+    _Common(CommonSymbol),
 }
 
 impl Symbol {
@@ -32,8 +32,9 @@ impl Symbol {
         Self::Public(PublicSymbol { group, segment, frame, offset, used: false })
     }
 
+    #[cfg(test)]
     pub fn common(size: u32, isfar: bool) -> Self {
-        Self::Common(CommonSymbol { size, isfar, group: 0, segment: 0, offset: 0 })
+        Self::_Common(CommonSymbol { size, isfar, group: 0, segment: 0, offset: 0 })
     }
 }
 
@@ -68,7 +69,7 @@ impl SymbolTable {
                             Err(LinkerError::new(&format!("Public symbol {} is redefined as communal variable.", name)))
                         };
                     },
-                    Symbol::Common(_) => {
+                    Symbol::_Common(_) => {
                         if let &Symbol::Public(_) = &symbol {
                             return Err(LinkerError::new(&format!("Common variable {} is redefined as public symbol.", name)));
                         }
@@ -86,9 +87,9 @@ impl SymbolTable {
             return Ok(())
         }
 
-        if let Symbol::Common(newsym) = &symbol {
+        if let Symbol::_Common(newsym) = &symbol {
             match self.symbols.get_mut(name) {
-                Some(Symbol::Common(oldsym)) => {
+                Some(Symbol::_Common(oldsym)) => {
                     if newsym.isfar != oldsym.isfar {
                         return Err(LinkerError::new(&format!("Attempt to change near/far attribute of common variable {}", name)));
                     }
@@ -246,7 +247,7 @@ mod test {
         symbols.update("buffer", symbol)?;
 
         match symbols.symbols.get("buffer") {
-            Some(Symbol::Common(common)) => {
+            Some(Symbol::_Common(common)) => {
                 assert_eq!(common.size, 200);
             },
             _ => panic!("invalid symbol type")

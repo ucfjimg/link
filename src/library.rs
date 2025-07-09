@@ -1,8 +1,10 @@
-use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use crate::linker_error::LinkerError;
 use crate::object::Object;
 use crate::record::{Record, RecordType};
+
+#[cfg(test)]
+use std::collections::{HashSet, VecDeque};
 
 ///
 /// Operations on an OMF library file
@@ -42,8 +44,8 @@ pub struct Dictionary {
 ///
 #[derive(Copy, Clone, Debug)]
 pub struct ExtDict {
-    offset: usize,
-    nodecount: usize,
+    _offset: usize,
+    _nodecount: usize,
 }
 
 /// An OMF library file.
@@ -53,7 +55,7 @@ pub struct Library {
     pub name: String,
     pub page_size: usize,
     pub dictionary: Option<Dictionary>,
-    pub extdict: Option<ExtDict>,
+    pub _extdict: Option<ExtDict>,
     pub case_sensitive: bool,
     pub data: Vec<u8>,
 }
@@ -113,7 +115,7 @@ impl Library {
                     let nodecount = u16::from_le_bytes([encnodes[0], encnodes[1]]) as usize;
                     let offset = offset + 5;
 
-                    extdict = Some(ExtDict{offset, nodecount});
+                    extdict = Some(ExtDict{_offset: offset, _nodecount: nodecount});
                 }
             }
         }
@@ -122,7 +124,7 @@ impl Library {
             name: name.to_owned(),
             page_size,
             dictionary,
-            extdict,
+            _extdict: extdict,
             case_sensitive: false,
             data
         })
@@ -147,7 +149,7 @@ impl Library {
             return Err(LinkerError::new(&format!("page {} in library {} is not a module (missing THEADR)", modpage, self.name)));
         }
 
-        let modname = match header.counted_string() {
+        let _modname = match header.counted_string() {
             Ok(name) => name,
             Err(err) => return Err(LinkerError::new(&format!("page {} in library {} is not a module: {}", modpage, self.name, err))),
         };
@@ -317,19 +319,20 @@ impl Library {
     /// Retrieve a list of depdenent modules for a module. Both `modpage` and the returned
     /// modules are by module page number.
     ///
+    #[cfg(test)]
     pub fn get_module_dependencies(&self, modpage: usize) -> Result<Vec<usize>, LinkerError> {
         let mut dependencies = Vec::new();
 
-        if let Some(extdict) = self.extdict.as_ref() {
+        if let Some(extdict) = self._extdict.as_ref() {
             let mut low = 0;
-            let mut high = extdict.nodecount - 1;
+            let mut high = extdict._nodecount - 1;
 
             let depsoffs = loop {
                 if low > high {
                     break None;
                 }
                 let mid = (low + high) / 2;
-                let offset = extdict.offset + mid * 4;
+                let offset = extdict._offset + mid * 4;
                 let node = &self.data[offset..offset + 4];
 
                 let midmodpage = u16::from_le_bytes([node[0], node[1]]) as usize;
@@ -347,7 +350,7 @@ impl Library {
             };
 
             if let Some(depsoffs) = depsoffs {
-                let depsoffs = depsoffs + extdict.offset;
+                let depsoffs = depsoffs + extdict._offset;
 
                 if depsoffs + 2 > self.data.len() {
                     return Err(LinkerError::new("invalid linker extdict: index out of bounds"));
@@ -366,11 +369,11 @@ impl Library {
                     let depsnode = &self.data[nodeoffs..nodeoffs + 2];
                     let depsnode = u16::from_le_bytes([depsnode[0], depsnode[1]]) as usize;
 
-                    if depsnode >= extdict.nodecount {
+                    if depsnode >= extdict._nodecount {
                         return Err(LinkerError::new("invalid linker extdict: node out of bounds"));
                     }
 
-                    let nodeoffs = extdict.offset + depsnode * 4;
+                    let nodeoffs = extdict._offset + depsnode * 4;
                     let node = &self.data[nodeoffs..nodeoffs + 2];
                     let modpage = u16::from_le_bytes([node[0], node[1]]) as usize;
 
@@ -387,6 +390,7 @@ impl Library {
     /// however, that data does not include transitive dependencies. This routine will
     /// search the graph to find all (even indirect) dependencies.
     ///
+    #[cfg(test)]
     pub fn get_all_module_dependencies(&self, modstart: usize) -> Result<Vec<usize>, LinkerError> {
         let mut alldeps = HashSet::new();
         let mut depqueue = VecDeque::new();
@@ -414,54 +418,6 @@ impl Library {
         alldeps.sort();
 
         Ok(alldeps)
-    }
-}
-
-/// A collection of library files.
-///
-pub struct LibraryCollection {
-    pub libs: Vec<Library>,
-}
-
-impl LibraryCollection {
-    pub fn new() -> Self {
-        Self {
-            libs: Vec::new(),
-        }
-    }
-
-    pub fn add_library(&mut self, lib: &str, libpath: &[PathBuf]) -> Result<(), LinkerError> {
-        //
-        // Does the library already exist?
-        //
-        let uplib = lib.to_uppercase();
-
-        if self.libs.iter().find(|x| x.name == uplib).is_some() {
-            //
-            // Library is already there. NB this means we don't support libraries of
-            // the same name at different paths.
-            //
-            Ok(())
-        } else {
-            let mut filename = PathBuf::from(lib);
-            filename.set_extension("lib");
-
-            let fullpath = if filename.exists() {
-                Some(filename)
-            } else {
-                libpath.iter()
-                    .find(|p| p.join(&filename).exists())
-                    .map(|p| p.join(&filename))
-            };
-
-            if fullpath.is_none() {
-                Err(LinkerError::new(&format!("cannot find library {}", lib)))
-            } else {
-                let lib = Library::new(lib, fullpath.unwrap())?;
-                self.libs.push(lib);
-                Ok(())
-            }
-        }
     }
 }
 

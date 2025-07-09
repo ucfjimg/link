@@ -176,7 +176,7 @@ fn write_linkmap(linkmap: &PathBuf, linkstate: &LinkState, objects: &[Object]) -
                     (p.frame as usize, p.offset as usize)
                 }
             },
-            &Symbol::Common(_c) => { (0,0) },
+            &Symbol::_Common(_c) => { (0,0) },
             _ => continue,
         };
 

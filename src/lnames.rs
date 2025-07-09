@@ -1,5 +1,3 @@
-use std::ops::{Index, IndexMut};
-
 use crate::omf_vec::OmfVec;
 
 //
@@ -26,6 +24,7 @@ impl LNames {
         }
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.names.len()
     }

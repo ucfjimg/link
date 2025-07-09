@@ -22,6 +22,7 @@ impl IndexMap {
         self.indices.add(index)
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.indices.len()
     }
